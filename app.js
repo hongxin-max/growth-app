@@ -133,6 +133,10 @@ const App = {
 
     goBack() {
         if (this.stack.length > 1) { this.stack.pop(); this.render(); }
+        if (this._pendingCelebrate) {
+            this._pendingCelebrate = false;
+            setTimeout(() => this._celebrate(), 300);
+        }
     },
 
     render() {
@@ -213,6 +217,7 @@ const App = {
             return;
         }
         Store.add('problems', { problem: q1, judgment: q2, tried: q3 });
+        if ((q1 + q2 + q3).length >= 10) this._pendingCelebrate = true;
         Modal.alert('🌟', '很不错！', '你的大脑已经在重新构建，别急！<br>我们慢慢来就好。', '继续加油', 'success', 'App.goBack()');
     },
 
@@ -221,6 +226,7 @@ const App = {
         if (!c) { Modal.alert('✏️', '写点什么吧', '哪怕只有一句话，也是今天的收获。'); return; }
         const { type, label } = this.current.params;
         Store.add('outputs', { type, label, content: c });
+        if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('✨', '已记录！', '每一次记录都是成长的印记。', '好的', 'success', 'App.goBack()');
     },
 
@@ -229,6 +235,7 @@ const App = {
         if (!c) { Modal.alert('✏️', '写点什么吧', '反思不需要长篇大论，一句话也好。'); return; }
         const { type, label } = this.current.params;
         Store.add('reflects', { type, label, content: c });
+        if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('🪞', '已记录', '看见问题本身就是进步。', '好的', 'primary', 'App.goBack()');
     },
 
@@ -236,6 +243,7 @@ const App = {
         const c = document.getElementById('f-content').value.trim();
         if (!c) { Modal.alert('✏️', '想想看', '今天一定有值得表扬自己的地方！'); return; }
         Store.add('encourages', { content: c });
+        if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('🎉', '你值得被肯定！', '记住这个感觉，你比自己以为的更好。', '谢谢自己', 'success', 'App.goBack()');
     },
 
@@ -243,6 +251,7 @@ const App = {
         const c = document.getElementById('f-content').value.trim();
         if (!c) { Modal.alert('✏️', '诚实面对', '写下来不是为了自我惩罚，是为了不再重复。'); return; }
         Store.add('criticizes', { content: c });
+        if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('💪', '已记录', '能直面不足的人，才有资格变强。', '我会改进', 'primary', 'App.goBack()');
     },
 
@@ -251,6 +260,7 @@ const App = {
         const m = document.getElementById('f-month').value;
         if (!c) { Modal.alert('✏️', '想想看', '这个月一定有进步的地方！'); return; }
         Store.add('monthlyPos', { month: m, content: c });
+        if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('📈', '正反馈已记录', '每一点进步都值得被铭记。', '好的', 'success', 'App.goBack()');
     },
 
@@ -259,6 +269,7 @@ const App = {
         const m = document.getElementById('f-month').value;
         if (!c) { Modal.alert('✏️', '诚实面对', '记录遗憾不是为了自责，是为了下个月更好。'); return; }
         Store.add('monthlyNeg', { month: m, content: c });
+        if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('📝', '负反馈已记录', '看见问题就是解决问题的开始。', '下个月会更好', 'primary', 'App.goBack()');
     },
 
@@ -269,6 +280,7 @@ const App = {
         const wins = [w1, w2, w3].filter(w => w);
         if (!wins.length) { Modal.alert('✏️', '想想看', '今天一定有值得记录的小胜利！<br>搞明白了一个变量名？问问题前自己先想了？都算！'); return; }
         Store.add('victories', { wins });
+        if (wins.join('').length >= 10) this._pendingCelebrate = true;
         const msgs = [
             '每一个小胜利都在修复你的自信心！',
             '看到了吗？你今天做到了这些！',
@@ -492,6 +504,115 @@ const App = {
         const newHash = await this._hashPwd(nw);
         localStorage.setItem('gt_lock_hash', newHash);
         Modal.alert('✅', '密码已修改', '下次打开时将使用新密码。', '好的', 'success');
+    },
+
+    _celebrate() {
+        const overlay = document.createElement('div');
+        overlay.id = 'celebrate-overlay';
+        document.body.appendChild(overlay);
+
+        const canvas = document.createElement('canvas');
+        overlay.appendChild(canvas);
+        const textEl = document.createElement('div');
+        textEl.className = 'celebrate-text';
+        overlay.appendChild(textEl);
+
+        const ctx = canvas.getContext('2d');
+        let W = canvas.width = window.innerWidth;
+        let H = canvas.height = window.innerHeight;
+
+        const particles = [];
+        const rockets = [];
+        const palette = [
+            '#ff6b6b','#feca57','#48dbfb','#ff9ff3','#54a0ff',
+            '#5f27cd','#01a3a4','#f368e0','#ff9f43','#00d2d3',
+            '#6c5ce7','#fd79a8','#e17055','#00cec9','#fdcb6e'
+        ];
+
+        function launchRocket() {
+            rockets.push({
+                x: W * (0.15 + Math.random() * 0.7),
+                y: H,
+                targetY: H * (0.08 + Math.random() * 0.32),
+                speed: 4 + Math.random() * 4,
+                color: palette[Math.floor(Math.random() * palette.length)]
+            });
+        }
+
+        function explode(x, y, color) {
+            const count = 60 + Math.floor(Math.random() * 50);
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1.5 + Math.random() * 5.5;
+                particles.push({
+                    x, y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    life: 1,
+                    decay: 0.008 + Math.random() * 0.014,
+                    color: Math.random() < 0.3 ? palette[Math.floor(Math.random() * palette.length)] : color,
+                    size: 1.5 + Math.random() * 2.5
+                });
+            }
+        }
+
+        [0, 200, 500, 850, 1200, 1600, 2000].forEach(t => setTimeout(launchRocket, t));
+
+        let running = true;
+        function animate() {
+            if (!running) return;
+            ctx.fillStyle = 'rgba(0,0,0,0.18)';
+            ctx.fillRect(0, 0, W, H);
+
+            for (let i = rockets.length - 1; i >= 0; i--) {
+                const r = rockets[i];
+                r.y -= r.speed;
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = r.color;
+                ctx.beginPath();
+                ctx.arc(r.x, r.y, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 0.3;
+                ctx.beginPath();
+                ctx.arc(r.x + (Math.random() - 0.5) * 2, r.y + 10, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+                if (r.y <= r.targetY) {
+                    explode(r.x, r.y, r.color);
+                    rockets.splice(i, 1);
+                }
+            }
+
+            ctx.globalAlpha = 1;
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.035;
+                p.vx *= 0.99;
+                p.life -= p.decay;
+                if (p.life <= 0) { particles.splice(i, 1); continue; }
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+            requestAnimationFrame(animate);
+        }
+        animate();
+
+        const msgs = ['今天的你很棒！','认真记录的你很棒！','静下心问题就解决了！','你要名副其实！'];
+        setTimeout(() => {
+            textEl.textContent = msgs[Math.floor(Math.random() * msgs.length)];
+            textEl.classList.add('show');
+        }, 2200);
+
+        setTimeout(() => {
+            running = false;
+            overlay.style.opacity = '0';
+            setTimeout(() => overlay.remove(), 600);
+        }, 5200);
     },
 
     _mergeData(data) {
