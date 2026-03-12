@@ -1,0 +1,745 @@
+/* ========== DATA STORE ========== */
+const Store = {
+    _k(k) { return 'gt_' + k; },
+    get(k) { try { return JSON.parse(localStorage.getItem(this._k(k))) || []; } catch { return []; } },
+    save(k, arr) { localStorage.setItem(this._k(k), JSON.stringify(arr)); },
+    add(k, entry) {
+        const arr = this.get(k);
+        entry.id = Date.now();
+        entry.time = new Date().toISOString();
+        arr.unshift(entry);
+        this.save(k, arr);
+    },
+    del(k, id) { this.save(k, this.get(k).filter(e => e.id !== id)); },
+    count(k) { return this.get(k).length; },
+    ALL_KEYS: ['problems', 'outputs', 'reflects', 'encourages', 'criticizes', 'monthlyPos', 'monthlyNeg', 'victories']
+};
+
+/* ========== MODAL ========== */
+const Modal = {
+    _mask: null, _inner: null, _closeable: true,
+    init() {
+        this._mask = document.getElementById('modal-mask');
+        this._inner = document.getElementById('modal-inner');
+    },
+    show(html, closeable) {
+        this._inner.innerHTML = html;
+        this._closeable = closeable !== false;
+        this._mask.classList.add('show');
+    },
+    hide() { this._mask.classList.remove('show'); },
+    onMaskClick(e) { if (e.target === this._mask && this._closeable) this.hide(); },
+
+    alert(icon, title, text, btnText, btnClass, afterCode) {
+        const onclick = afterCode ? 'Modal.hide();' + afterCode : 'Modal.hide()';
+        this.show(`
+            <div class="modal-icon">${icon}</div>
+            <div class="modal-title">${title}</div>
+            <div class="modal-text">${text}</div>
+            <button class="modal-btn ${btnClass || 'primary'}" onclick="${onclick}">${btnText || '我知道了'}</button>
+        `, false);
+    },
+
+    select(title, options, fnName) {
+        const opts = options.map(o => `
+            <button class="modal-option" onclick="Modal.hide();${fnName}('${o.value}')">
+                <span class="mo-icon">${o.icon}</span><span class="mo-text">${o.text}</span>
+            </button>`).join('');
+        this.show(`
+            <div class="modal-title">${title}</div>
+            <div class="modal-options">${opts}</div>
+            <button class="modal-btn ghost" onclick="Modal.hide()">取消</button>
+        `, true);
+    }
+};
+
+/* ========== APP ========== */
+const App = {
+    stack: [],
+
+    init() {
+        Modal.init();
+        this.navigate('home');
+        window.addEventListener('popstate', () => {
+            if (this.stack.length > 1) { this.stack.pop(); this.render(); }
+        });
+    },
+
+    get current() { return this.stack[this.stack.length - 1]; },
+
+    navigate(page, params) {
+        this.stack.push({ page, params: params || {} });
+        if (this.stack.length > 1) history.pushState(null, '', '');
+        this.render();
+        if (page === 'problem') this._problemWarning();
+    },
+
+    goBack() {
+        if (this.stack.length > 1) { this.stack.pop(); this.render(); }
+    },
+
+    render() {
+        const { page, params } = this.current;
+        const fn = this.pages[page];
+        if (fn) {
+            document.getElementById('main').innerHTML = '<div class="page-enter">' + fn.call(this, params) + '</div>';
+            document.getElementById('main').scrollTop = 0;
+        }
+        this._header();
+    },
+
+    _header() {
+        const { page } = this.current;
+        const titles = {
+            home: '成长轨迹', problem: '问题分析', daily: '每日产出 & 反思',
+            outputForm: '记录产出', reflectForm: '记录反思',
+            mood: '鼓励 & 批判', encourageForm: '表扬自己', criticizeForm: '审视自己',
+            monthly: '月积累', monthlyPositive: '本月正反馈', monthlyNegative: '本月负反馈',
+            victories: '每日小胜利', history: '历史记录'
+        };
+        document.getElementById('page-title').textContent = titles[page] || '成长轨迹';
+        document.getElementById('btn-back').classList.toggle('hidden', page === 'home');
+        const hist = ['problem','outputForm','reflectForm','encourageForm','criticizeForm','monthlyPositive','monthlyNegative','victories'];
+        document.getElementById('btn-hist').classList.toggle('hidden', !hist.includes(page));
+    },
+
+    /* --- Modals --- */
+    _problemWarning() {
+        Modal.alert('🚫', '停！先想一想',
+            '不可以说「搞不懂这个业务」、「不会这个方向」！<br><br>你到底有没有<b>仔细分析</b>过这个问题？<br>分析之后再来吧！',
+            '我分析过了', 'primary');
+    },
+
+    showOutputTypeSelect() {
+        Modal.select('今天的收获是什么类型？', [
+            { icon: '💬', text: '想说的话', value: 'words' },
+            { icon: '📊', text: '想做的表', value: 'table' },
+            { icon: '🎨', text: '想画的图', value: 'drawing' },
+            { icon: '💡', text: '想积累的经验', value: 'experience' }
+        ], 'App._onOutputType');
+    },
+    _onOutputType(v) {
+        const m = { words: '想说的话', table: '想做的表', drawing: '想画的图', experience: '想积累的经验' };
+        App.navigate('outputForm', { type: v, label: m[v] });
+    },
+
+    showReflectTypeSelect() {
+        Modal.select('今天的反思是什么类型？', [
+            { icon: '❌', text: '做错的事', value: 'wrongAction' },
+            { icon: '🗣️', text: '说错的话', value: 'wrongWords' },
+            { icon: '🧭', text: '想错的方向', value: 'wrongDirection' }
+        ], 'App._onReflectType');
+    },
+    _onReflectType(v) {
+        const m = { wrongAction: '做错的事', wrongWords: '说错的话', wrongDirection: '想错的方向' };
+        App.navigate('reflectForm', { type: v, label: m[v] });
+    },
+
+    showCurrentHistory() {
+        const map = {
+            problem: 'problems', outputForm: 'outputs', reflectForm: 'reflects',
+            encourageForm: 'encourages', criticizeForm: 'criticizes',
+            monthlyPositive: 'monthlyPos', monthlyNegative: 'monthlyNeg',
+            victories: 'victories'
+        };
+        const k = map[this.current.page];
+        if (k) this.navigate('history', { key: k });
+    },
+
+    /* --- Submissions --- */
+    submitProblem() {
+        const q1 = document.getElementById('f-problem').value.trim();
+        const q2 = document.getElementById('f-judgment').value.trim();
+        const q3 = document.getElementById('f-tried').value.trim();
+        if (!q1 || !q2 || !q3) {
+            Modal.alert('✏️', '还没写完', '三个问题都要填，这是在训练你的分析肌肉！');
+            return;
+        }
+        Store.add('problems', { problem: q1, judgment: q2, tried: q3 });
+        Modal.alert('🌟', '很不错！', '你的大脑已经在重新构建，别急！<br>我们慢慢来就好。', '继续加油', 'success', 'App.goBack()');
+    },
+
+    submitOutput() {
+        const c = document.getElementById('f-content').value.trim();
+        if (!c) { Modal.alert('✏️', '写点什么吧', '哪怕只有一句话，也是今天的收获。'); return; }
+        const { type, label } = this.current.params;
+        Store.add('outputs', { type, label, content: c });
+        Modal.alert('✨', '已记录！', '每一次记录都是成长的印记。', '好的', 'success', 'App.goBack()');
+    },
+
+    submitReflect() {
+        const c = document.getElementById('f-content').value.trim();
+        if (!c) { Modal.alert('✏️', '写点什么吧', '反思不需要长篇大论，一句话也好。'); return; }
+        const { type, label } = this.current.params;
+        Store.add('reflects', { type, label, content: c });
+        Modal.alert('🪞', '已记录', '看见问题本身就是进步。', '好的', 'primary', 'App.goBack()');
+    },
+
+    submitEncourage() {
+        const c = document.getElementById('f-content').value.trim();
+        if (!c) { Modal.alert('✏️', '想想看', '今天一定有值得表扬自己的地方！'); return; }
+        Store.add('encourages', { content: c });
+        Modal.alert('🎉', '你值得被肯定！', '记住这个感觉，你比自己以为的更好。', '谢谢自己', 'success', 'App.goBack()');
+    },
+
+    submitCriticize() {
+        const c = document.getElementById('f-content').value.trim();
+        if (!c) { Modal.alert('✏️', '诚实面对', '写下来不是为了自我惩罚，是为了不再重复。'); return; }
+        Store.add('criticizes', { content: c });
+        Modal.alert('💪', '已记录', '能直面不足的人，才有资格变强。', '我会改进', 'primary', 'App.goBack()');
+    },
+
+    submitMonthlyPos() {
+        const c = document.getElementById('f-content').value.trim();
+        const m = document.getElementById('f-month').value;
+        if (!c) { Modal.alert('✏️', '想想看', '这个月一定有进步的地方！'); return; }
+        Store.add('monthlyPos', { month: m, content: c });
+        Modal.alert('📈', '正反馈已记录', '每一点进步都值得被铭记。', '好的', 'success', 'App.goBack()');
+    },
+
+    submitMonthlyNeg() {
+        const c = document.getElementById('f-content').value.trim();
+        const m = document.getElementById('f-month').value;
+        if (!c) { Modal.alert('✏️', '诚实面对', '记录遗憾不是为了自责，是为了下个月更好。'); return; }
+        Store.add('monthlyNeg', { month: m, content: c });
+        Modal.alert('📝', '负反馈已记录', '看见问题就是解决问题的开始。', '下个月会更好', 'primary', 'App.goBack()');
+    },
+
+    submitVictories() {
+        const w1 = document.getElementById('f-win1').value.trim();
+        const w2 = document.getElementById('f-win2').value.trim();
+        const w3 = document.getElementById('f-win3').value.trim();
+        const wins = [w1, w2, w3].filter(w => w);
+        if (!wins.length) { Modal.alert('✏️', '想想看', '今天一定有值得记录的小胜利！<br>搞明白了一个变量名？问问题前自己先想了？都算！'); return; }
+        Store.add('victories', { wins });
+        const msgs = [
+            '每一个小胜利都在修复你的自信心！',
+            '看到了吗？你今天做到了这些！',
+            '积少成多，这就是成长的样子！',
+        ];
+        Modal.alert('🏆', `记录了 ${wins.length} 个小胜利！`, msgs[Math.floor(Math.random() * msgs.length)], '继续加油', 'success', 'App.goBack()');
+    },
+
+    deleteEntry(key, id) {
+        Modal.show(`
+            <div class="modal-icon">⚠️</div>
+            <div class="modal-title">确认删除</div>
+            <div class="modal-text">删除后无法恢复，确定要删除吗？</div>
+            <button class="modal-btn danger" onclick="Store.del('${key}',${id});Modal.hide();App.render()">确认删除</button>
+            <button class="modal-btn ghost" onclick="Modal.hide()">取消</button>
+        `, true);
+    },
+
+    /* --- Data management --- */
+    exportData() {
+        const data = {};
+        Store.ALL_KEYS.forEach(k => { data[k] = Store.get(k); });
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = '成长轨迹_' + new Date().toISOString().slice(0, 10) + '.json';
+        a.click(); URL.revokeObjectURL(url);
+        Modal.alert('✅', '导出成功', '备份文件已下载，可以传到另一台设备上导入。', '好的', 'success');
+    },
+
+    importData() {
+        const input = document.createElement('input');
+        input.type = 'file'; input.accept = '.json';
+        input.onchange = e => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = ev => {
+                try {
+                    const data = JSON.parse(ev.target.result);
+                    Store.ALL_KEYS.forEach(k => {
+                        if (data[k] && Array.isArray(data[k])) {
+                            const existing = Store.get(k);
+                            const ids = new Set(existing.map(x => x.id));
+                            const merged = [...existing];
+                            data[k].forEach(x => { if (!ids.has(x.id)) merged.push(x); });
+                            merged.sort((a, b) => b.id - a.id);
+                            Store.save(k, merged);
+                        }
+                    });
+                    Modal.alert('✅', '导入成功', '数据已合并到本地记录中。', '好的', 'success');
+                    App.render();
+                } catch { Modal.alert('❌', '导入失败', '文件格式不正确。'); }
+            };
+            reader.readAsText(file);
+        };
+        input.click();
+    },
+
+    /* --- Stats helpers --- */
+    _calcStreak() {
+        const allDates = new Set();
+        Store.ALL_KEYS.forEach(k => {
+            Store.get(k).forEach(e => {
+                if (e.time) allDates.add(e.time.slice(0, 10));
+            });
+        });
+        if (!allDates.size) return 0;
+
+        const toDateStr = d => d.toISOString().slice(0, 10);
+        const prevDay = s => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() - 1); return toDateStr(d); };
+
+        const today = toDateStr(new Date());
+        let streak = 0, check = today;
+
+        if (allDates.has(check)) {
+            streak = 1;
+            check = prevDay(check);
+            while (allDates.has(check)) { streak++; check = prevDay(check); }
+        } else {
+            check = prevDay(today);
+            if (allDates.has(check)) {
+                streak = 1;
+                check = prevDay(check);
+                while (allDates.has(check)) { streak++; check = prevDay(check); }
+            }
+        }
+        return streak;
+    },
+
+    _weeklyCount() {
+        const now = Date.now();
+        const week = 7 * 24 * 60 * 60 * 1000;
+        let c = 0;
+        Store.ALL_KEYS.forEach(k => {
+            Store.get(k).forEach(e => { if (e.time && now - new Date(e.time).getTime() < week) c++; });
+        });
+        return c;
+    },
+
+    _totalCount() {
+        let c = 0;
+        Store.ALL_KEYS.forEach(k => { c += Store.count(k); });
+        return c;
+    },
+
+    _month() {
+        const d = new Date();
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    },
+
+    _pad: n => String(n).padStart(2, '0'),
+
+    _fmtDate(iso) {
+        const d = new Date(iso);
+        return `${d.getFullYear()}/${App._pad(d.getMonth()+1)}/${App._pad(d.getDate())} ${App._pad(d.getHours())}:${App._pad(d.getMinutes())}`;
+    },
+
+    _fmtDay(iso) {
+        const d = new Date(iso);
+        const days = ['周日','周一','周二','周三','周四','周五','周六'];
+        const today = new Date().toISOString().slice(0,10);
+        const yesterday = (() => { const y = new Date(); y.setDate(y.getDate()-1); return y.toISOString().slice(0,10); })();
+        const ds = iso.slice(0, 10);
+        if (ds === today) return '今天';
+        if (ds === yesterday) return '昨天';
+        return `${d.getMonth()+1}月${d.getDate()}日 ${days[d.getDay()]}`;
+    },
+
+    _fmtTime(iso) {
+        const d = new Date(iso);
+        return `${App._pad(d.getHours())}:${App._pad(d.getMinutes())}`;
+    },
+
+    _greeting() {
+        const h = new Date().getHours();
+        if (h < 6)  return '夜深了，注意休息';
+        if (h < 9)  return '早上好';
+        if (h < 12) return '上午好';
+        if (h < 14) return '中午好';
+        if (h < 18) return '下午好';
+        if (h < 22) return '晚上好';
+        return '夜深了，注意休息';
+    },
+
+    _dateStr() {
+        const d = new Date();
+        const days = ['日','一','二','三','四','五','六'];
+        return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日 星期${days[d.getDay()]}`;
+    },
+
+    _esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; },
+
+    _groupByDate(entries) {
+        const groups = {};
+        entries.forEach(e => {
+            const d = e.time ? e.time.slice(0, 10) : 'unknown';
+            if (!groups[d]) groups[d] = [];
+            groups[d].push(e);
+        });
+        return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+    },
+
+    /* ========== PAGE RENDERERS ========== */
+    pages: {
+        home() {
+            const streak = App._calcStreak();
+            const total = App._totalCount();
+            const weekly = App._weeklyCount();
+
+            const quotes = [
+                '每一次记录，都是对自己的一次负责',
+                '主体性，从写下第一个判断开始',
+                '你不是不行，你只是还在路上',
+                '把「我不会」换成「我下一步学什么」',
+                '成长不是没有弯路，是弯路也在走',
+                '先自己判断，再去问别人',
+                '今天比昨天强一点点就够了',
+                '能看见问题的人，离解决问题最近',
+                '不要泡在水里等学会游泳，一个动作一个动作练',
+                '一天搞透一个函数，一个月就是三十个',
+                '能教会别人的知识，才是你真正掌握的',
+                '「没基础」是起点描述，不是终点判决',
+                '你缺的不是能力，是一次自己拍板的经验',
+                '小胜利积累起来，就是大自信',
+                '受苦方式不对，再累也没有产出'
+            ];
+            const q = quotes[Math.floor(Math.random() * quotes.length)];
+
+            const cn = {
+                p: Store.count('problems'),
+                d: Store.count('outputs') + Store.count('reflects'),
+                v: Store.count('victories'),
+                m: Store.count('encourages') + Store.count('criticizes'),
+                mo: Store.count('monthlyPos') + Store.count('monthlyNeg')
+            };
+
+            return `
+                <div class="home-greeting">
+                    <div class="hi">${App._greeting()}</div>
+                    <div class="date">${App._dateStr()}</div>
+                    <div class="streak-badge ${streak === 0 ? 'zero' : ''}">
+                        ${streak > 0 ? '🔥' : '⏳'} ${streak > 0 ? '连续 ' + streak + ' 天' : '今天还没记录'}
+                    </div>
+                    <div class="home-quote">"${q}"</div>
+                </div>
+
+                <div class="stats-row">
+                    <div class="stat-card">
+                        <div class="stat-value">${total}</div>
+                        <div class="stat-label">总记录</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${streak}</div>
+                        <div class="stat-label">连续天数</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${weekly}</div>
+                        <div class="stat-label">本周记录</div>
+                    </div>
+                </div>
+
+                <div class="home-cards">
+                    <div class="home-card c1 card-stagger" onclick="App.navigate('problem')">
+                        <div class="card-icon">🔍</div>
+                        <div class="card-body"><h3>问题分析</h3><p>先分析，再求助</p></div>
+                        ${cn.p ? '<span class="card-badge">'+cn.p+'</span>' : ''}
+                    </div>
+                    <div class="home-card c2 card-stagger" onclick="App.navigate('daily')">
+                        <div class="card-icon">📝</div>
+                        <div class="card-body"><h3>每日产出 & 反思</h3><p>记录收获，反思不足</p></div>
+                        ${cn.d ? '<span class="card-badge">'+cn.d+'</span>' : ''}
+                    </div>
+                    <div class="home-card c3 card-stagger" onclick="App.navigate('victories')">
+                        <div class="card-icon">🏆</div>
+                        <div class="card-body"><h3>每日小胜利</h3><p>三个小赢，修复自信</p></div>
+                        ${cn.v ? '<span class="card-badge">'+cn.v+'</span>' : ''}
+                    </div>
+                    <div class="home-card c4 card-stagger" onclick="App.navigate('mood')">
+                        <div class="card-icon">💪</div>
+                        <div class="card-body"><h3>鼓励 & 批判</h3><p>表扬自己，也审视自己</p></div>
+                        ${cn.m ? '<span class="card-badge">'+cn.m+'</span>' : ''}
+                    </div>
+                    <div class="home-card c5 card-stagger" onclick="App.navigate('monthly')">
+                        <div class="card-icon">📅</div>
+                        <div class="card-body"><h3>月积累</h3><p>以月为单位的成长记录</p></div>
+                        ${cn.mo ? '<span class="card-badge">'+cn.mo+'</span>' : ''}
+                    </div>
+                </div>
+
+                <div class="data-actions">
+                    <button onclick="App.exportData()">📤 导出备份</button>
+                    <span class="dot">·</span>
+                    <button onclick="App.importData()">📥 导入数据</button>
+                </div>`;
+        },
+
+        problem() {
+            return `
+                <div class="form-section">
+                    <div class="form-intro">
+                        <p>💡 这不是一个普通的笔记框，这是<b>主体性训练</b>。</p>
+                        <p>在你问任何人之前，先在这里写下你自己的判断。哪怕是错的，也要先写。</p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">我现在遇到的具体问题是什么 <span class="req">*</span></label>
+                        <div class="form-hint">越具体越好。不要写"搞不懂"，要写清楚卡在哪一步、哪一行、哪个概念。</div>
+                        <textarea class="form-textarea" id="f-problem" placeholder="例：移植焦点仲裁功能时，AudioFocusManager 的 requestFocus 方法中第三个参数 streamType，我不确定在新平台上应该传什么值..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">我自己的初步判断是什么 <span class="req">*</span></label>
+                        <div class="form-hint">先自己判断，再求证。哪怕是猜的也写下来——这就是主体性。</div>
+                        <textarea class="form-textarea" id="f-judgment" placeholder="例：我判断可能是新旧平台的音频流类型枚举不一样，需要做映射。依据是我在旧代码里看到 STREAM_MUSIC=3，但新平台的定义好像不同..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">我已经尝试了什么 <span class="req">*</span></label>
+                        <div class="form-hint">列出你做过的所有尝试，包括失败的。失败的尝试也是有效信息。</div>
+                        <textarea class="form-textarea" id="f-tried" placeholder="例：1. 查看了旧平台的枚举定义文件 2. 在新平台代码库搜索了 STREAM_ 关键字 3. 尝试直接传旧值但编译报错 4. 查了官方文档但没找到迁移说明..."></textarea>
+                    </div>
+                    <button class="btn btn-primary" onclick="App.submitProblem()">提交分析</button>
+                </div>`;
+        },
+
+        daily() {
+            return `
+                <div class="sub-menu">
+                    <div class="sub-card green card-stagger" onclick="App.showOutputTypeSelect()">
+                        <div class="sc-icon">📤</div>
+                        <div class="sc-body"><h3>每日产出</h3><p>记录今天的收获和学到的东西</p></div>
+                    </div>
+                    <div class="sub-card orange card-stagger" onclick="App.showReflectTypeSelect()">
+                        <div class="sc-icon">🪞</div>
+                        <div class="sc-body"><h3>每日反思</h3><p>回顾今天做得不够好的地方</p></div>
+                    </div>
+                </div>
+                <div class="section-divider">历史记录</div>
+                <div class="sub-menu">
+                    <div class="sub-card muted card-stagger" onclick="App.navigate('history',{key:'outputs',title:'产出记录'})">
+                        <div class="sc-icon">📂</div>
+                        <div class="sc-body"><h3>产出记录</h3><p>共 ${Store.count('outputs')} 条</p></div>
+                    </div>
+                    <div class="sub-card muted card-stagger" onclick="App.navigate('history',{key:'reflects',title:'反思记录'})">
+                        <div class="sc-icon">📂</div>
+                        <div class="sc-body"><h3>反思记录</h3><p>共 ${Store.count('reflects')} 条</p></div>
+                    </div>
+                </div>`;
+        },
+
+        outputForm(p) {
+            const cm = { words: 'blue', table: 'green', drawing: 'orange', experience: 'purple' };
+            const ph = {
+                words: '把你想说的写下来，不需要很长，真实就好...',
+                table: '描述你想做的表格内容：问题拆解表、知识对比表、函数参数对照表...',
+                drawing: '描述你画的逻辑图内容，或者记录图中的关键信息和调用关系...',
+                experience: '今天积累到的经验，哪怕只有一句话也好。比如"原来 git rebase 和 merge 的区别是..."'
+            };
+            return `
+                <div class="form-section">
+                    <span class="type-badge ${cm[p.type] || 'blue'}">${App._esc(p.label)}</span>
+                    <div class="form-group">
+                        <label class="form-label">记录你的产出 <span class="req">*</span></label>
+                        <textarea class="form-textarea large" id="f-content" placeholder="${ph[p.type] || ''}"></textarea>
+                    </div>
+                    <button class="btn btn-success" onclick="App.submitOutput()">保存记录</button>
+                </div>`;
+        },
+
+        reflectForm(p) {
+            const cm = { wrongAction: 'red', wrongWords: 'orange', wrongDirection: 'purple' };
+            const ph = {
+                wrongAction: '今天做错了什么事？具体错在哪里？下次怎么避免？\n\n比如：今天拿到任务后没有先自己分析，直接就去问同事了...',
+                wrongWords: '今天说错了什么话？当时应该怎么说？\n\n比如：开会的时候说了"我搞不懂这个"，应该说"我目前卡在XX环节，我的判断是..."',
+                wrongDirection: '今天在什么事情上想偏了？正确的思路是什么？\n\n比如：我一直在试图理解整个模块，其实应该先专注搞懂一个函数...'
+            };
+            return `
+                <div class="form-section">
+                    <span class="type-badge ${cm[p.type] || 'red'}">${App._esc(p.label)}</span>
+                    <div class="form-group">
+                        <label class="form-label">写下你的反思 <span class="req">*</span></label>
+                        <textarea class="form-textarea large" id="f-content" placeholder="${ph[p.type] || ''}"></textarea>
+                    </div>
+                    <button class="btn btn-warm" onclick="App.submitReflect()">保存反思</button>
+                </div>`;
+        },
+
+        victories() {
+            return `
+                <div class="form-section">
+                    <div class="form-intro">
+                        <p>🏆 每天记录三个小胜利，系统性地修复你的自信心。</p>
+                        <p>哪怕再小的事也算：搞明白了一个变量名、git 操作没出错、今天自己先想了再问别人、看懂了一段 log...</p>
+                    </div>
+                    <div class="victory-group">
+                        <div class="victory-num">1</div>
+                        <textarea class="form-textarea" id="f-win1" placeholder="今天的第一个小胜利..."></textarea>
+                    </div>
+                    <div class="victory-group">
+                        <div class="victory-num">2</div>
+                        <textarea class="form-textarea" id="f-win2" placeholder="第二个...（选填）"></textarea>
+                    </div>
+                    <div class="victory-group">
+                        <div class="victory-num">3</div>
+                        <textarea class="form-textarea" id="f-win3" placeholder="第三个...（选填）"></textarea>
+                    </div>
+                    <button class="btn btn-success" onclick="App.submitVictories()">记录今日小胜利 🏆</button>
+                </div>`;
+        },
+
+        mood() {
+            return `
+                <div class="sub-menu">
+                    <div class="sub-card green card-stagger" onclick="App.navigate('encourageForm')">
+                        <div class="sc-icon">🌟</div>
+                        <div class="sc-body"><h3>鼓励自己</h3><p>今天最该表扬自己的一个点</p></div>
+                    </div>
+                    <div class="sub-card red card-stagger" onclick="App.navigate('criticizeForm')">
+                        <div class="sc-icon">⚡</div>
+                        <div class="sc-body"><h3>批判自己</h3><p>今天最该批评自己的一个点</p></div>
+                    </div>
+                </div>
+                <div class="section-divider">历史记录</div>
+                <div class="sub-menu">
+                    <div class="sub-card muted card-stagger" onclick="App.navigate('history',{key:'encourages',title:'鼓励记录'})">
+                        <div class="sc-icon">📂</div>
+                        <div class="sc-body"><h3>鼓励记录</h3><p>共 ${Store.count('encourages')} 条</p></div>
+                    </div>
+                    <div class="sub-card muted card-stagger" onclick="App.navigate('history',{key:'criticizes',title:'批判记录'})">
+                        <div class="sc-icon">📂</div>
+                        <div class="sc-body"><h3>批判记录</h3><p>共 ${Store.count('criticizes')} 条</p></div>
+                    </div>
+                </div>`;
+        },
+
+        encourageForm() {
+            return `
+                <div class="form-section">
+                    <div class="form-group">
+                        <label class="form-label">🌟 今天最该表扬自己的一个点 / 一件事 <span class="req">*</span></label>
+                        <div class="form-hint">搞明白了一个函数？没有第一时间就问别人？自己先写了判断再提问？都算！</div>
+                        <textarea class="form-textarea large" id="f-content" placeholder="今天我做得好的地方是..."></textarea>
+                    </div>
+                    <button class="btn btn-success" onclick="App.submitEncourage()">记录表扬 🌟</button>
+                </div>`;
+        },
+
+        criticizeForm() {
+            return `
+                <div class="form-section">
+                    <div class="form-group">
+                        <label class="form-label">⚡ 今天最该批评自己的一个点 / 一件事 <span class="req">*</span></label>
+                        <div class="form-hint">写具体。不要写"今天没努力"，要写"今天遇到XX问题直接问了别人，没有先自己分析"。</div>
+                        <textarea class="form-textarea large" id="f-content" placeholder="今天我做得不好的地方是..."></textarea>
+                    </div>
+                    <button class="btn btn-warm" onclick="App.submitCriticize()">记录批评 ⚡</button>
+                </div>`;
+        },
+
+        monthly() {
+            return `
+                <div class="sub-menu">
+                    <div class="sub-card green card-stagger" onclick="App.navigate('monthlyPositive')">
+                        <div class="sc-icon">📈</div>
+                        <div class="sc-body"><h3>本月正反馈</h3><p>记录这个月的进步和收获</p></div>
+                    </div>
+                    <div class="sub-card red card-stagger" onclick="App.navigate('monthlyNegative')">
+                        <div class="sc-icon">📉</div>
+                        <div class="sc-body"><h3>本月负反馈</h3><p>记录这个月的遗憾和错误</p></div>
+                    </div>
+                </div>
+                <div class="section-divider">历史记录</div>
+                <div class="sub-menu">
+                    <div class="sub-card muted card-stagger" onclick="App.navigate('history',{key:'monthlyPos',title:'正反馈记录'})">
+                        <div class="sc-icon">📂</div>
+                        <div class="sc-body"><h3>正反馈记录</h3><p>共 ${Store.count('monthlyPos')} 条</p></div>
+                    </div>
+                    <div class="sub-card muted card-stagger" onclick="App.navigate('history',{key:'monthlyNeg',title:'负反馈记录'})">
+                        <div class="sc-icon">📂</div>
+                        <div class="sc-body"><h3>负反馈记录</h3><p>共 ${Store.count('monthlyNeg')} 条</p></div>
+                    </div>
+                </div>`;
+        },
+
+        monthlyPositive() {
+            return `
+                <div class="form-section">
+                    <div class="form-group">
+                        <label class="form-label">月份</label>
+                        <input type="month" id="f-month" class="form-textarea compact" value="${App._month()}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">本月的进步和收获 <span class="req">*</span></label>
+                        <div class="form-hint">比上个月强在哪里？学到了什么新东西？有什么事情做得比以前好？</div>
+                        <textarea class="form-textarea large" id="f-content" placeholder="这个月我进步了...，收获了..."></textarea>
+                    </div>
+                    <button class="btn btn-success" onclick="App.submitMonthlyPos()">保存正反馈</button>
+                </div>`;
+        },
+
+        monthlyNegative() {
+            return `
+                <div class="form-section">
+                    <div class="form-group">
+                        <label class="form-label">月份</label>
+                        <input type="month" id="f-month" class="form-textarea compact" value="${App._month()}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">本月的遗憾和错误 <span class="req">*</span></label>
+                        <div class="form-hint">这个月有什么遗憾？犯了什么重复的错误？下个月怎么避免？</div>
+                        <textarea class="form-textarea large" id="f-content" placeholder="这个月我遗憾的是...，重复犯了...的错误"></textarea>
+                    </div>
+                    <button class="btn btn-warm" onclick="App.submitMonthlyNeg()">保存负反馈</button>
+                </div>`;
+        },
+
+        history(p) {
+            const entries = Store.get(p.key);
+            if (!entries.length) {
+                return `<div class="history-empty"><div class="he-icon">📭</div><p>还没有记录<br>开始你的第一条吧</p></div>`;
+            }
+
+            const hlMap = {
+                problems: 'hl-blue', outputs: 'hl-green', reflects: 'hl-orange',
+                encourages: 'hl-green', criticizes: 'hl-red',
+                monthlyPos: 'hl-green', monthlyNeg: 'hl-red',
+                victories: 'hl-gold'
+            };
+            const hl = hlMap[p.key] || '';
+            const groups = App._groupByDate(entries);
+
+            let html = '<div class="history-list">';
+
+            groups.forEach(([dateStr, items]) => {
+                html += `<div class="date-group-header"><span class="dgh-dot"></span>${App._fmtDay(dateStr + 'T12:00:00')}</div>`;
+
+                items.forEach(e => {
+                    html += `<div class="history-card ${hl}">`;
+                    html += `<div class="hc-time">${App._fmtTime(e.time)}</div>`;
+                    html += `<button class="hc-del" onclick="App.deleteEntry('${p.key}',${e.id})">×</button>`;
+
+                    if (p.key === 'problems') {
+                        html += `<div class="hc-fields">
+                            <div class="hc-field"><div class="hc-field-label">遇到的问题</div><div class="hc-field-value">${App._esc(e.problem)}</div></div>
+                            <div class="hc-field"><div class="hc-field-label">我的判断</div><div class="hc-field-value">${App._esc(e.judgment)}</div></div>
+                            <div class="hc-field"><div class="hc-field-label">已尝试的</div><div class="hc-field-value">${App._esc(e.tried)}</div></div>
+                        </div>`;
+                    } else if (p.key === 'victories') {
+                        html += `<div class="victory-list">`;
+                        (e.wins || []).forEach((w, i) => {
+                            html += `<div class="victory-item"><span class="vi-num">${i+1}</span><span class="vi-text">${App._esc(w)}</span></div>`;
+                        });
+                        html += '</div>';
+                    } else if (p.key === 'monthlyPos' || p.key === 'monthlyNeg') {
+                        if (e.month) html += `<span class="hc-type">${App._esc(e.month)}</span>`;
+                        html += `<div class="hc-content">${App._esc(e.content)}</div>`;
+                    } else {
+                        if (e.label) html += `<span class="hc-type">${App._esc(e.label)}</span>`;
+                        html += `<div class="hc-content">${App._esc(e.content)}</div>`;
+                    }
+
+                    html += '</div>';
+                });
+            });
+
+            html += '</div>';
+            return html;
+        }
+    }
+};
+
+document.addEventListener('DOMContentLoaded', () => App.init());
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
