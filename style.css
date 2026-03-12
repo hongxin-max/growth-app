@@ -631,14 +631,220 @@ html, body {
 .lock-error { margin-top: 12px; font-size: 13px; color: #fbd38d; min-height: 20px; position: relative; z-index: 1; }
 .lock-setup-hint { margin-top: 16px; font-size: 11px; opacity: .4; text-align: center; line-height: 1.7; position: relative; z-index: 1; max-width: 260px; }
 
-/* ===== RESPONSIVE ===== */
-@media (min-width: 600px) {
-    #main { max-width: 540px; margin: 0 auto; padding: 20px 20px; }
-    .stats-row { gap: 12px; }
-    .stat-card { padding: 18px 12px; }
-    .stat-value { font-size: 30px; }
-    .home-card { padding: 18px 20px; }
+/* =======================================
+   RESPONSIVE: TABLET (>=768px)
+   ======================================= */
+@media (min-width: 768px) {
+    :root { --hdr-h: 60px; }
+
+    .lock-screen { padding: 48px; }
+    .lock-input { max-width: 320px; font-size: 20px; padding: 16px 22px; }
+    .lock-btn { max-width: 320px; padding: 16px; font-size: 16px; }
+    .lock-title { font-size: 32px; }
+    .lock-sub { font-size: 14px; }
+    .lock-logo { font-size: 64px; }
+
+    #main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 28px 32px;
+    }
+
+    #page-title { font-size: 19px; }
+
+    .home-greeting .hi { font-size: 34px; }
+    .home-greeting .date { font-size: 14px; }
+    .home-quote { font-size: 14px; padding: 16px 24px; }
+
+    .stats-row { gap: 14px; margin: 22px 0; }
+    .stat-card { padding: 20px 12px; }
+    .stat-value { font-size: 32px; }
+    .stat-label { font-size: 12px; }
+
+    .home-cards {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+    }
+    .home-card { padding: 20px 20px; }
+    .home-card:last-child:nth-child(odd) {
+        grid-column: 1 / -1;
+        max-width: 50%;
+        justify-self: center;
+    }
+    .card-body h3 { font-size: 16px; }
+    .card-body p { font-size: 13px; }
+
+    .weekly-banner { padding: 16px 20px; }
+    .weekly-banner .wb-body h3 { font-size: 15px; }
+
+    .sub-menu {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+    }
+    .sub-card { padding: 20px 18px; }
+
+    .form-section { max-width: 560px; margin: 0 auto; }
+    .form-label { font-size: 15px; }
+    .form-textarea { font-size: 15px; min-height: 120px; }
+    .form-textarea.large { min-height: 180px; }
+    .btn { padding: 16px; font-size: 16px; max-width: 400px; margin-left: auto; margin-right: auto; }
+
+    .history-list {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+    }
+    .date-group-header { grid-column: 1 / -1; }
+
+    .wr-summary { gap: 14px; }
+    .wr-stat { padding: 20px 16px; }
+    .wr-stat-value { font-size: 32px; }
+    .wr-bar-label { width: 80px; font-size: 13px; }
+    .wr-bar-track { height: 24px; }
+
+    .modal-dialog { max-width: 420px; padding: 36px 30px 28px; }
+
+    .data-actions { gap: 6px; padding: 24px 0 12px; }
+    .data-actions button { font-size: 13px; padding: 8px 14px; }
+
+    .section-divider { font-size: 12px; padding: 24px 0 8px; }
+
+    .victory-group .form-textarea { min-height: 80px; }
+
+    /* PC hover effects */
+    .home-card:hover { transform: translateY(-3px) scale(1.01); box-shadow: var(--shadow-lg); }
+    .home-card:active { transform: scale(.98); }
+    .sub-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+    .stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+    .weekly-banner:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+    .history-card:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+    .modal-option:hover { border-color: var(--primary-light); background: rgba(102,126,234,.03); }
+    .btn:hover { transform: translateY(-1px); filter: brightness(1.05); }
+    .hc-del:hover { color: var(--danger); background: rgba(229,62,62,.08); }
+    .data-actions button:hover { color: var(--primary); background: rgba(102,126,234,.06); }
+    .lock-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(102,126,234,.35); }
 }
-@media (min-width: 900px) {
-    #main { max-width: 620px; }
+
+/* =======================================
+   RESPONSIVE: DESKTOP (>=1024px)
+   ======================================= */
+@media (min-width: 1024px) {
+    #header {
+        padding: 0 calc((100% - 860px) / 2 + 16px);
+    }
+    #main {
+        max-width: 860px;
+        padding: 36px 48px;
+    }
+
+    .lock-screen {
+        background: linear-gradient(160deg, #0d1117 0%, #161b22 30%, #1a1a2e 60%, #16213e 100%);
+    }
+    .lock-input { max-width: 360px; padding: 18px 24px; font-size: 22px; border-radius: 18px; }
+    .lock-btn { max-width: 360px; padding: 18px; font-size: 17px; border-radius: 18px; }
+    .lock-title { font-size: 36px; letter-spacing: 4px; }
+    .lock-logo { font-size: 72px; margin-bottom: 18px; }
+    .lock-sub { font-size: 15px; margin-bottom: 36px; }
+    .lock-setup-hint { max-width: 360px; font-size: 12px; }
+
+    .home-greeting .hi { font-size: 38px; }
+    .home-greeting .date { font-size: 15px; }
+    .home-quote { font-size: 15px; max-width: 600px; margin-left: auto; margin-right: auto; }
+    .streak-badge { font-size: 14px; padding: 7px 22px; }
+
+    .stats-row { gap: 16px; margin: 24px auto; max-width: 500px; }
+    .stat-card { padding: 22px 16px; border-radius: var(--radius); }
+    .stat-value { font-size: 36px; }
+    .stat-label { font-size: 13px; margin-top: 5px; }
+
+    .home-cards { gap: 16px; }
+    .home-card { padding: 22px 24px; border-radius: 22px; }
+    .card-icon { font-size: 34px; margin-right: 18px; }
+    .card-body h3 { font-size: 17px; margin-bottom: 3px; }
+    .card-body p { font-size: 14px; }
+
+    .weekly-banner { padding: 18px 24px; border-radius: 22px; max-width: 600px; margin: 0 auto 16px; }
+    .weekly-banner .wb-icon { font-size: 30px; }
+    .weekly-banner .wb-body h3 { font-size: 16px; }
+    .weekly-banner .wb-body p { font-size: 13px; }
+
+    .sub-menu { gap: 16px; max-width: 700px; margin-left: auto; margin-right: auto; }
+    .sub-card { padding: 22px 20px; border-radius: 18px; }
+    .sub-card .sc-icon { font-size: 28px; }
+    .sub-card .sc-body h3 { font-size: 16px; }
+    .sub-card .sc-body p { font-size: 13px; }
+
+    .form-section { max-width: 620px; }
+    .form-intro { padding: 18px 24px; }
+    .form-intro p { font-size: 15px; }
+    .form-label { font-size: 16px; }
+    .form-hint { font-size: 13px; }
+    .form-textarea { font-size: 16px; padding: 16px 20px; border-radius: 16px; }
+    .form-textarea.large { min-height: 200px; }
+    .btn { font-size: 16px; padding: 17px; border-radius: 16px; max-width: 440px; }
+
+    .history-list { gap: 14px; }
+    .history-card { padding: 18px 20px; border-radius: 16px; }
+    .hc-content { font-size: 15px; }
+    .hc-field-value { font-size: 15px; }
+
+    .wr-bars { max-width: 600px; margin-left: auto; margin-right: auto; margin-bottom: 24px; }
+    .wr-bar-label { width: 90px; font-size: 14px; }
+    .wr-bar-track { height: 26px; border-radius: 13px; }
+    .wr-bar-fill { border-radius: 13px; }
+    .wr-bar-count { font-size: 15px; font-weight: 800; }
+
+    .modal-dialog { max-width: 440px; padding: 40px 36px 32px; border-radius: 28px; }
+    .modal-icon { font-size: 56px; }
+    .modal-title { font-size: 20px; }
+    .modal-text { font-size: 15px; }
+    .modal-btn { padding: 15px; font-size: 15px; border-radius: 14px; }
+    .modal-option { padding: 14px 18px; font-size: 15px; border-radius: 14px; }
+}
+
+/* =======================================
+   RESPONSIVE: WIDE DESKTOP (>=1280px)
+   ======================================= */
+@media (min-width: 1280px) {
+    #header {
+        padding: 0 calc((100% - 960px) / 2 + 16px);
+    }
+    #main { max-width: 960px; padding: 40px 56px; }
+
+    .home-cards {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 18px;
+        justify-items: stretch;
+    }
+    .home-card { grid-column: span 2; max-width: 100%; justify-self: stretch; }
+    .home-card:nth-child(4) { grid-column: 2 / span 2; }
+    .home-card:nth-child(5) { grid-column: 4 / span 2; }
+
+    .home-greeting .hi { font-size: 42px; }
+
+    .stats-row { max-width: 560px; }
+    .stat-card { padding: 24px 16px; }
+    .stat-value { font-size: 38px; }
+    .stat-label { font-size: 14px; }
+
+    .form-section { max-width: 680px; }
+    .form-textarea { min-height: 140px; }
+    .form-textarea.large { min-height: 220px; }
+    .btn { max-width: 480px; padding: 18px; font-size: 17px; }
+
+    .history-list { grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+    .history-card { padding: 20px 22px; }
+
+    .sub-menu { gap: 18px; max-width: 800px; }
+    .sub-card { padding: 24px 22px; border-radius: 20px; }
+
+    .wr-summary { max-width: 500px; margin-left: auto; margin-right: auto; }
+    .wr-stat { padding: 24px 16px; border-radius: 18px; }
+    .wr-stat-value { font-size: 36px; }
+
+    .data-actions button { font-size: 14px; padding: 8px 16px; border-radius: 10px; }
+    .data-actions { gap: 8px; }
 }
