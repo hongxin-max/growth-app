@@ -59,10 +59,27 @@ const App = {
 
     init() {
         Modal.init();
+        this._applyTheme(localStorage.getItem('gt_theme') || 'light');
         this.navigate('home');
         window.addEventListener('popstate', () => {
             if (this.stack.length > 1) { this.stack.pop(); this.render(); }
         });
+    },
+
+    toggleTheme() {
+        const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        this._applyTheme(next);
+        localStorage.setItem('gt_theme', next);
+    },
+
+    _applyTheme(t) {
+        document.documentElement.setAttribute('data-theme', t);
+        const icon = document.getElementById('icon-theme');
+        if (icon) {
+            icon.innerHTML = t === 'dark'
+                ? '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'
+                : '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+        }
     },
 
     get current() { return this.stack[this.stack.length - 1]; },
@@ -95,7 +112,7 @@ const App = {
             outputForm: '记录产出', reflectForm: '记录反思',
             mood: '鼓励 & 批判', encourageForm: '表扬自己', criticizeForm: '审视自己',
             monthly: '月积累', monthlyPositive: '本月正反馈', monthlyNegative: '本月负反馈',
-            victories: '每日小胜利', history: '历史记录'
+            victories: '每日小胜利', weeklyReport: '本周报告', history: '历史记录'
         };
         document.getElementById('page-title').textContent = titles[page] || '成长轨迹';
         document.getElementById('btn-back').classList.toggle('hidden', page === 'home');
@@ -230,16 +247,73 @@ const App = {
         `, true);
     },
 
-    /* --- Data management --- */
+    /* --- Data management (with optional AES-GCM encryption) --- */
     exportData() {
+        Modal.show(`
+            <div class="modal-icon">📤</div>
+            <div class="modal-title">导出数据</div>
+            <div class="modal-text">是否需要加密保护？加密后导入时需要输入相同密码。</div>
+            <button class="modal-btn primary" onclick="Modal.hide();App._doExport(true)">🔒 加密导出</button>
+            <button class="modal-btn success" onclick="Modal.hide();App._doExport(false)">📄 普通导出</button>
+            <button class="modal-btn ghost" onclick="Modal.hide()">取消</button>
+        `, true);
+    },
+
+    _doExport(encrypt) {
+        if (!encrypt) {
+            this._downloadJson(this._gatherData(), false);
+            return;
+        }
+        Modal.show(`
+            <div class="modal-icon">🔐</div>
+            <div class="modal-title">设置加密密码</div>
+            <div class="modal-text">请输入一个你能记住的密码，导入时需要用同一个密码解密。</div>
+            <input class="modal-input" id="exp-pwd" type="password" placeholder="输入密码" autocomplete="off">
+            <button class="modal-btn primary" onclick="App._encryptAndExport()">确认导出</button>
+            <button class="modal-btn ghost" onclick="Modal.hide()">取消</button>
+        `, false);
+        setTimeout(() => { const el = document.getElementById('exp-pwd'); if (el) el.focus(); }, 300);
+    },
+
+    _gatherData() {
         const data = {};
         Store.ALL_KEYS.forEach(k => { data[k] = Store.get(k); });
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        return data;
+    },
+
+    async _encryptAndExport() {
+        const pwd = document.getElementById('exp-pwd').value;
+        if (!pwd) { Modal.alert('⚠️', '请输入密码', '密码不能为空。'); return; }
+        try {
+            const enc = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(pwd), 'PBKDF2', false, ['deriveKey']);
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const key = await crypto.subtle.deriveKey(
+                { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+                keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['encrypt']
+            );
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const plaintext = enc.encode(JSON.stringify(this._gatherData()));
+            const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
+            const payload = {
+                encrypted: true,
+                salt: Array.from(salt),
+                iv: Array.from(iv),
+                data: Array.from(new Uint8Array(ciphertext))
+            };
+            this._downloadJson(payload, true);
+        } catch { Modal.alert('❌', '加密失败', '你的浏览器可能不支持 Web Crypto API。'); }
+    },
+
+    _downloadJson(obj, isEncrypted) {
+        const blob = new Blob([JSON.stringify(obj)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url; a.download = '成长轨迹_' + new Date().toISOString().slice(0, 10) + '.json';
-        a.click(); URL.revokeObjectURL(url);
-        Modal.alert('✅', '导出成功', '备份文件已下载，可以传到另一台设备上导入。', '好的', 'success');
+        a.href = url;
+        a.download = '成长轨迹_' + new Date().toISOString().slice(0, 10) + (isEncrypted ? '_encrypted' : '') + '.json';
+        a.click();
+        URL.revokeObjectURL(url);
+        Modal.alert('✅', '导出成功', isEncrypted ? '加密备份已下载，请牢记密码。' : '备份文件已下载。', '好的', 'success');
     },
 
     importData() {
@@ -251,24 +325,68 @@ const App = {
             const reader = new FileReader();
             reader.onload = ev => {
                 try {
-                    const data = JSON.parse(ev.target.result);
-                    Store.ALL_KEYS.forEach(k => {
-                        if (data[k] && Array.isArray(data[k])) {
-                            const existing = Store.get(k);
-                            const ids = new Set(existing.map(x => x.id));
-                            const merged = [...existing];
-                            data[k].forEach(x => { if (!ids.has(x.id)) merged.push(x); });
-                            merged.sort((a, b) => b.id - a.id);
-                            Store.save(k, merged);
-                        }
-                    });
-                    Modal.alert('✅', '导入成功', '数据已合并到本地记录中。', '好的', 'success');
-                    App.render();
+                    const raw = JSON.parse(ev.target.result);
+                    if (raw.encrypted) {
+                        this._showDecryptModal(raw);
+                    } else {
+                        this._mergeData(raw);
+                    }
                 } catch { Modal.alert('❌', '导入失败', '文件格式不正确。'); }
             };
             reader.readAsText(file);
         };
         input.click();
+    },
+
+    _showDecryptModal(raw) {
+        Modal.show(`
+            <div class="modal-icon">🔐</div>
+            <div class="modal-title">文件已加密</div>
+            <div class="modal-text">请输入导出时设置的密码来解密。</div>
+            <input class="modal-input" id="imp-pwd" type="password" placeholder="输入密码" autocomplete="off">
+            <button class="modal-btn primary" onclick="App._decryptAndImport()">解密导入</button>
+            <button class="modal-btn ghost" onclick="Modal.hide()">取消</button>
+        `, false);
+        App._pendingEncrypted = raw;
+        setTimeout(() => { const el = document.getElementById('imp-pwd'); if (el) el.focus(); }, 300);
+    },
+
+    async _decryptAndImport() {
+        const pwd = document.getElementById('imp-pwd').value;
+        const raw = App._pendingEncrypted;
+        if (!pwd) { Modal.alert('⚠️', '请输入密码', '密码不能为空。'); return; }
+        try {
+            const enc = new TextEncoder();
+            const dec = new TextDecoder();
+            const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(pwd), 'PBKDF2', false, ['deriveKey']);
+            const key = await crypto.subtle.deriveKey(
+                { name: 'PBKDF2', salt: new Uint8Array(raw.salt), iterations: 100000, hash: 'SHA-256' },
+                keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
+            );
+            const plaintext = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: new Uint8Array(raw.iv) },
+                key, new Uint8Array(raw.data)
+            );
+            const data = JSON.parse(dec.decode(plaintext));
+            this._mergeData(data);
+        } catch {
+            Modal.alert('❌', '解密失败', '密码不正确或文件已损坏。');
+        }
+    },
+
+    _mergeData(data) {
+        Store.ALL_KEYS.forEach(k => {
+            if (data[k] && Array.isArray(data[k])) {
+                const existing = Store.get(k);
+                const ids = new Set(existing.map(x => x.id));
+                const merged = [...existing];
+                data[k].forEach(x => { if (!ids.has(x.id)) merged.push(x); });
+                merged.sort((a, b) => b.id - a.id);
+                Store.save(k, merged);
+            }
+        });
+        Modal.alert('✅', '导入成功', '数据已合并到本地记录中。', '好的', 'success');
+        App.render();
     },
 
     /* --- Stats helpers --- */
@@ -365,6 +483,31 @@ const App = {
 
     _esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; },
 
+    _weekRange() {
+        const now = new Date();
+        const day = now.getDay() || 7;
+        const mon = new Date(now); mon.setDate(now.getDate() - day + 1); mon.setHours(0,0,0,0);
+        const sun = new Date(mon); sun.setDate(mon.getDate() + 6); sun.setHours(23,59,59,999);
+        return { start: mon, end: sun };
+    },
+
+    _countInRange(start, end) {
+        const counts = {};
+        const s = start.getTime(), e = end.getTime();
+        Store.ALL_KEYS.forEach(k => {
+            counts[k] = 0;
+            Store.get(k).forEach(x => {
+                if (x.time) { const t = new Date(x.time).getTime(); if (t >= s && t <= e) counts[k]++; }
+            });
+        });
+        counts._total = Object.values(counts).reduce((a, b) => a + b, 0);
+        return counts;
+    },
+
+    _weekLabel(d) {
+        return `${d.getMonth()+1}/${d.getDate()}`;
+    },
+
     _groupByDate(entries) {
         const groups = {};
         entries.forEach(e => {
@@ -432,6 +575,15 @@ const App = {
                         <div class="stat-value">${weekly}</div>
                         <div class="stat-label">本周记录</div>
                     </div>
+                </div>
+
+                <div class="weekly-banner" onclick="App.navigate('weeklyReport')">
+                    <div class="wb-icon">📊</div>
+                    <div class="wb-body">
+                        <h3>本周报告</h3>
+                        <p>查看本周成长统计与分类分析</p>
+                    </div>
+                    <div class="wb-arrow">›</div>
                 </div>
 
                 <div class="home-cards">
@@ -683,6 +835,81 @@ const App = {
                         <textarea class="form-textarea large" id="f-content" placeholder="这个月我遗憾的是...，重复犯了...的错误"></textarea>
                     </div>
                     <button class="btn btn-warm" onclick="App.submitMonthlyNeg()">保存负反馈</button>
+                </div>`;
+        },
+
+        weeklyReport() {
+            const wr = App._weekRange();
+            const cur = App._countInRange(wr.start, wr.end);
+            const prevStart = new Date(wr.start); prevStart.setDate(prevStart.getDate() - 7);
+            const prevEnd = new Date(wr.end); prevEnd.setDate(prevEnd.getDate() - 7);
+            const prev = App._countInRange(prevStart, prevEnd);
+
+            const diff = cur._total - prev._total;
+            const diffCls = diff > 0 ? 'up' : diff < 0 ? 'down' : 'same';
+            const diffTxt = diff > 0 ? '↑ ' + diff : diff < 0 ? '↓ ' + Math.abs(diff) : '— 持平';
+
+            const cats = [
+                { key: 'problems', label: '问题分析', cls: '' },
+                { key: 'outputs', label: '产出', cls: 'green' },
+                { key: 'reflects', label: '反思', cls: 'orange' },
+                { key: 'victories', label: '小胜利', cls: 'gold' },
+                { key: 'encourages', label: '鼓励', cls: 'green' },
+                { key: 'criticizes', label: '批判', cls: 'pink' },
+                { key: 'monthlyPos', label: '月正反馈', cls: 'blue' },
+                { key: 'monthlyNeg', label: '月负反馈', cls: 'orange' },
+            ];
+            const maxCount = Math.max(1, ...cats.map(c => cur[c.key]));
+
+            let barsHtml = '';
+            cats.forEach(c => {
+                if (cur[c.key] > 0 || prev[c.key] > 0) {
+                    const pct = Math.round((cur[c.key] / maxCount) * 100);
+                    barsHtml += `<div class="wr-bar-row">
+                        <div class="wr-bar-label">${c.label}</div>
+                        <div class="wr-bar-track"><div class="wr-bar-fill ${c.cls}" style="width:${pct}%"></div></div>
+                        <div class="wr-bar-count">${cur[c.key]}</div>
+                    </div>`;
+                }
+            });
+            if (!barsHtml) barsHtml = '<div style="text-align:center;color:var(--text-light);padding:20px">本周还没有记录</div>';
+
+            const activeDays = new Set();
+            Store.ALL_KEYS.forEach(k => {
+                Store.get(k).forEach(e => {
+                    if (e.time) {
+                        const t = new Date(e.time).getTime();
+                        if (t >= wr.start.getTime() && t <= wr.end.getTime()) activeDays.add(e.time.slice(0, 10));
+                    }
+                });
+            });
+
+            return `
+                <div class="page-enter">
+                    <div class="form-intro" style="text-align:center;margin-bottom:16px">
+                        <p style="font-weight:700;font-size:16px">${App._weekLabel(wr.start)} — ${App._weekLabel(wr.end)}</p>
+                    </div>
+                    <div class="wr-summary">
+                        <div class="wr-stat">
+                            <div class="wr-stat-value">${cur._total}</div>
+                            <div class="wr-stat-label">本周记录</div>
+                            <div class="wr-stat-diff ${diffCls}">${diffTxt}</div>
+                        </div>
+                        <div class="wr-stat">
+                            <div class="wr-stat-value">${activeDays.size}</div>
+                            <div class="wr-stat-label">活跃天数</div>
+                            <div class="wr-stat-diff ${activeDays.size >= 5 ? 'up' : activeDays.size >= 3 ? 'same' : 'down'}">
+                                ${activeDays.size >= 5 ? '优秀' : activeDays.size >= 3 ? '还行' : '加油'}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="section-divider">分类统计</div>
+                    <div class="wr-bars">${barsHtml}</div>
+                    ${cur._total > 0 ? `<div class="form-intro" style="text-align:center">
+                        <p>${cur._total > prev._total ? '比上周多了 ' + (cur._total - prev._total) + ' 条记录，继续保持！' :
+                            cur._total === prev._total ? '和上周持平，试试看能不能多记一点？' :
+                            '比上周少了 ' + (prev._total - cur._total) + ' 条，这周再努力一点！'}</p>
+                    </div>` : ''}
                 </div>`;
         },
 

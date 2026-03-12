@@ -1,4 +1,4 @@
-const CACHE_NAME = 'growth-v2';
+const CACHE_NAME = 'growth-v3';
 const ASSETS = ['./index.html', './style.css', './app.js', './manifest.json'];
 
 self.addEventListener('install', e => {
