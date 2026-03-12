@@ -689,7 +689,7 @@ const App = {
                 '判断权长期外包，你的主体性会越来越虚',
                 '你不缺反思，缺的是反思之后的行动',
             ];
-            const isWarm = Math.random() > 0.4;
+            const isWarm = Math.random() < 0.3;
             const pool = isWarm ? warm : cold;
             const q = pool[Math.floor(Math.random() * pool.length)];
             const qStyle = isWarm ? '' : 'border-left:3px solid #e53e3e;background:rgba(229,62,62,.06)';
