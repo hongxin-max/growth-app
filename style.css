@@ -666,6 +666,62 @@ html, body {
 .modal-input::placeholder { letter-spacing: normal; }
 [data-theme="dark"] .modal-input { background: #0f172a; border-color: #475569; }
 
+/* ===== LOCK SCREEN ===== */
+.lock-screen {
+    position: fixed; inset: 0; z-index: 200;
+    background: linear-gradient(135deg, #667eea 0%, #5a67d8 40%, #764ba2 100%);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 32px;
+    color: #fff;
+}
+[data-theme="dark"] .lock-screen {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 40%, #1a1033 100%);
+}
+.lock-logo { font-size: 64px; margin-bottom: 16px; }
+.lock-title { font-size: 24px; font-weight: 800; margin-bottom: 6px; }
+.lock-sub { font-size: 14px; opacity: .7; margin-bottom: 32px; }
+.lock-input {
+    width: 100%; max-width: 280px;
+    padding: 14px 18px;
+    border: 2px solid rgba(255,255,255,.3);
+    border-radius: var(--radius-sm);
+    background: rgba(255,255,255,.12);
+    color: #fff; font-size: 18px;
+    font-family: inherit;
+    text-align: center;
+    letter-spacing: 4px;
+    backdrop-filter: blur(8px);
+    transition: border-color .2s;
+}
+.lock-input:focus { outline: none; border-color: rgba(255,255,255,.6); }
+.lock-input::placeholder { color: rgba(255,255,255,.4); letter-spacing: normal; font-size: 14px; }
+.lock-btn {
+    width: 100%; max-width: 280px;
+    margin-top: 16px;
+    padding: 14px;
+    border: none; border-radius: var(--radius-sm);
+    background: rgba(255,255,255,.2);
+    backdrop-filter: blur(4px);
+    color: #fff; font-size: 16px; font-weight: 700;
+    cursor: pointer; font-family: inherit;
+    transition: background .2s;
+}
+.lock-btn:active { background: rgba(255,255,255,.3); }
+.lock-error {
+    margin-top: 12px;
+    font-size: 14px;
+    color: #fbd38d;
+    min-height: 20px;
+}
+.lock-setup-hint {
+    margin-top: 20px;
+    font-size: 12px;
+    opacity: .5;
+    text-align: center;
+    line-height: 1.6;
+}
+
 /* ===== RESPONSIVE ===== */
 @media (min-width: 600px) {
     #main { max-width: 560px; margin: 0 auto; padding: 24px 20px; }

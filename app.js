@@ -60,6 +60,46 @@ const App = {
     init() {
         Modal.init();
         this._applyTheme(localStorage.getItem('gt_theme') || 'light');
+        this._checkLock();
+    },
+
+    _checkLock() {
+        const hash = localStorage.getItem('gt_lock_hash');
+        if (!hash) {
+            document.getElementById('lock-hint').textContent = '首次使用，请设置一个访问密码（设置后每次打开都需要输入）';
+            document.getElementById('lock-pwd').placeholder = '设置密码';
+        }
+        document.getElementById('lock-pwd').focus();
+    },
+
+    async _hashPwd(pwd) {
+        const data = new TextEncoder().encode(pwd + '_growth_salt_2026');
+        const buf = await crypto.subtle.digest('SHA-256', data);
+        return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    },
+
+    async unlock() {
+        const pwd = document.getElementById('lock-pwd').value;
+        if (!pwd) { document.getElementById('lock-error').textContent = '请输入密码'; return; }
+
+        const storedHash = localStorage.getItem('gt_lock_hash');
+        const inputHash = await this._hashPwd(pwd);
+
+        if (!storedHash) {
+            localStorage.setItem('gt_lock_hash', inputHash);
+            this._enterApp();
+        } else if (inputHash === storedHash) {
+            this._enterApp();
+        } else {
+            document.getElementById('lock-error').textContent = '密码不正确';
+            document.getElementById('lock-pwd').value = '';
+            document.getElementById('lock-pwd').focus();
+        }
+    },
+
+    _enterApp() {
+        document.getElementById('lock-screen').style.display = 'none';
+        document.getElementById('app').style.display = 'flex';
         this.navigate('home');
         window.addEventListener('popstate', () => {
             if (this.stack.length > 1) { this.stack.pop(); this.render(); }
@@ -252,11 +292,64 @@ const App = {
         Modal.show(`
             <div class="modal-icon">📤</div>
             <div class="modal-title">导出数据</div>
-            <div class="modal-text">是否需要加密保护？加密后导入时需要输入相同密码。</div>
-            <button class="modal-btn primary" onclick="Modal.hide();App._doExport(true)">🔒 加密导出</button>
-            <button class="modal-btn success" onclick="Modal.hide();App._doExport(false)">📄 普通导出</button>
+            <div class="modal-text">选择导出格式</div>
+            <button class="modal-btn primary" onclick="Modal.hide();App._doExport(true)">🔒 加密 JSON（可导入）</button>
+            <button class="modal-btn success" onclick="Modal.hide();App._doExport(false)">📄 普通 JSON（可导入）</button>
+            <button class="modal-btn" style="background:linear-gradient(135deg,#9f7aea,#805ad5);color:#fff" onclick="Modal.hide();App._exportTxt()">📝 TXT 文本（可阅读）</button>
             <button class="modal-btn ghost" onclick="Modal.hide()">取消</button>
         `, true);
+    },
+
+    _exportTxt() {
+        const lines = [];
+        const sep = '═'.repeat(50);
+        const thin = '─'.repeat(50);
+        lines.push(sep);
+        lines.push('  成长轨迹 · 数据导出');
+        lines.push('  导出时间：' + new Date().toLocaleString('zh-CN'));
+        lines.push(sep, '');
+
+        const keyNames = {
+            problems: '问题分析', outputs: '每日产出', reflects: '每日反思',
+            victories: '每日小胜利', encourages: '鼓励记录', criticizes: '批判记录',
+            monthlyPos: '月正反馈', monthlyNeg: '月负反馈'
+        };
+
+        Store.ALL_KEYS.forEach(k => {
+            const entries = Store.get(k);
+            if (!entries.length) return;
+            lines.push(`【${keyNames[k] || k}】共 ${entries.length} 条`, thin);
+
+            entries.forEach((e, i) => {
+                const time = e.time ? App._fmtDate(e.time) : '未知时间';
+                lines.push(`  #${i + 1}  ${time}`);
+
+                if (k === 'problems') {
+                    lines.push(`  问题：${e.problem}`, `  判断：${e.judgment}`, `  尝试：${e.tried}`);
+                } else if (k === 'victories') {
+                    (e.wins || []).forEach((w, j) => lines.push(`  胜利${j+1}：${w}`));
+                } else if (k === 'monthlyPos' || k === 'monthlyNeg') {
+                    if (e.month) lines.push(`  月份：${e.month}`);
+                    lines.push(`  内容：${e.content}`);
+                } else {
+                    if (e.label) lines.push(`  类型：${e.label}`);
+                    lines.push(`  内容：${e.content}`);
+                }
+                lines.push('');
+            });
+            lines.push('');
+        });
+
+        lines.push(sep, '  总计 ' + App._totalCount() + ' 条记录', sep);
+
+        const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = '成长轨迹_' + new Date().toISOString().slice(0, 10) + '.txt';
+        a.click();
+        URL.revokeObjectURL(url);
+        Modal.alert('✅', '导出成功', 'TXT 文件已下载，可以直接用记事本或手机打开阅读。', '好的', 'success');
     },
 
     _doExport(encrypt) {
@@ -372,6 +465,33 @@ const App = {
         } catch {
             Modal.alert('❌', '解密失败', '密码不正确或文件已损坏。');
         }
+    },
+
+    changePwd() {
+        Modal.show(`
+            <div class="modal-icon">🔑</div>
+            <div class="modal-title">修改访问密码</div>
+            <div class="modal-text">请先输入当前密码，再设置新密码。</div>
+            <input class="modal-input" id="chg-old" type="password" placeholder="当前密码" autocomplete="off">
+            <input class="modal-input" id="chg-new" type="password" placeholder="新密码" autocomplete="off">
+            <button class="modal-btn primary" onclick="App._doChangePwd()">确认修改</button>
+            <button class="modal-btn ghost" onclick="Modal.hide()">取消</button>
+        `, false);
+        setTimeout(() => { const el = document.getElementById('chg-old'); if (el) el.focus(); }, 300);
+    },
+
+    async _doChangePwd() {
+        const old = document.getElementById('chg-old').value;
+        const nw = document.getElementById('chg-new').value;
+        if (!old || !nw) { Modal.alert('⚠️', '请填写完整', '当前密码和新密码都不能为空。'); return; }
+        const oldHash = await this._hashPwd(old);
+        if (oldHash !== localStorage.getItem('gt_lock_hash')) {
+            Modal.alert('❌', '当前密码不正确', '请重新输入。');
+            return;
+        }
+        const newHash = await this._hashPwd(nw);
+        localStorage.setItem('gt_lock_hash', newHash);
+        Modal.alert('✅', '密码已修改', '下次打开时将使用新密码。', '好的', 'success');
     },
 
     _mergeData(data) {
@@ -525,24 +645,54 @@ const App = {
             const total = App._totalCount();
             const weekly = App._weeklyCount();
 
-            const quotes = [
+            const warm = [
                 '每一次记录，都是对自己的一次负责',
                 '主体性，从写下第一个判断开始',
                 '你不是不行，你只是还在路上',
-                '把「我不会」换成「我下一步学什么」',
-                '成长不是没有弯路，是弯路也在走',
-                '先自己判断，再去问别人',
                 '今天比昨天强一点点就够了',
                 '能看见问题的人，离解决问题最近',
-                '不要泡在水里等学会游泳，一个动作一个动作练',
                 '一天搞透一个函数，一个月就是三十个',
-                '能教会别人的知识，才是你真正掌握的',
-                '「没基础」是起点描述，不是终点判决',
-                '你缺的不是能力，是一次自己拍板的经验',
                 '小胜利积累起来，就是大自信',
-                '受苦方式不对，再累也没有产出'
+                '你已经比五个月前的自己强太多了',
+                '敢写下自己的判断，本身就是勇气',
+                '慢一点没关系，方向对就行',
+                '每一步弯路都在教你认路',
+                '你的努力不会白费，只是还在扎根',
+                '今天的笨拙，是明天熟练的学费',
+                '能坚持记录的人，不会差到哪里去',
+                '你已经在做很多人不敢做的事了',
+                '种子在土里的时候，谁也看不见它在生长',
+                '你问的每一个问题，都在缩短你和答案的距离',
+                '光是没有放弃这件事，就已经很了不起了',
+                '允许自己慢，但不允许自己停',
+                '五年后的你会感谢今天没有放弃的自己',
             ];
-            const q = quotes[Math.floor(Math.random() * quotes.length)];
+            const cold = [
+                '受苦方式不对，再累也没有产出',
+                '别再说「我没基础」了，这句话正在变成你的保护伞',
+                '你不是不会，你是不敢自己做决定',
+                '问别人之前你自己想了多久？三秒还是三十分钟？',
+                '「看了很多」和「学会了」之间隔着一个输出',
+                '不要泡在水里等学会游泳，一个动作一个动作练',
+                '你以为的努力，可能只是在重复低效的焦虑',
+                '如果今天和昨天做的事一模一样，你凭什么比昨天更强？',
+                '舒适区里没有成长，只有自我感动',
+                '很累不等于有效努力，别拿疲惫当成就感',
+                '你花在纠结上的时间，够搞懂三个函数了',
+                '你总说没时间，但你有时间焦虑',
+                '把「搞不懂」换成「我卡在哪里」，思路就出来了',
+                '五个月了，你给自己找了多少次借口？',
+                '别人一晚上搞定的事你做不出来，不是因为笨，是因为你没有逼自己一把',
+                '如果你不改变学习方式，再给你五个月结果也一样',
+                '说一百遍「我要努力」不如做一件具体的事',
+                '你在等什么？等一个完美的起点？它不存在',
+                '判断权长期外包，你的主体性会越来越虚',
+                '你不缺反思，缺的是反思之后的行动',
+            ];
+            const isWarm = Math.random() > 0.4;
+            const pool = isWarm ? warm : cold;
+            const q = pool[Math.floor(Math.random() * pool.length)];
+            const qStyle = isWarm ? '' : 'border-left:3px solid #e53e3e;background:rgba(229,62,62,.06)';
 
             const cn = {
                 p: Store.count('problems'),
@@ -559,7 +709,7 @@ const App = {
                     <div class="streak-badge ${streak === 0 ? 'zero' : ''}">
                         ${streak > 0 ? '🔥' : '⏳'} ${streak > 0 ? '连续 ' + streak + ' 天' : '今天还没记录'}
                     </div>
-                    <div class="home-quote">"${q}"</div>
+                    <div class="home-quote" style="${qStyle}">${isWarm ? '🌱' : '🔪'} "${q}"</div>
                 </div>
 
                 <div class="stats-row">
@@ -618,6 +768,8 @@ const App = {
                     <button onclick="App.exportData()">📤 导出备份</button>
                     <span class="dot">·</span>
                     <button onclick="App.importData()">📥 导入数据</button>
+                    <span class="dot">·</span>
+                    <button onclick="App.changePwd()">🔑 修改密码</button>
                 </div>`;
         },
 
