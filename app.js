@@ -1,3 +1,90 @@
+/* ========== MEDIA STORE (IndexedDB) ========== */
+const MediaStore = {
+    _db: null,
+    async init() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open('growth_media', 1);
+            req.onupgradeneeded = e => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains('images')) db.createObjectStore('images');
+                if (!db.objectStoreNames.contains('music')) db.createObjectStore('music', { keyPath: 'id', autoIncrement: true });
+            };
+            req.onsuccess = e => { this._db = e.target.result; resolve(); };
+            req.onerror = () => reject(req.error);
+        });
+    },
+    async put(store, key, val) {
+        return new Promise((res, rej) => {
+            const tx = this._db.transaction(store, 'readwrite');
+            tx.objectStore(store).put(val, key);
+            tx.oncomplete = () => res();
+            tx.onerror = () => rej(tx.error);
+        });
+    },
+    async get(store, key) {
+        return new Promise((res, rej) => {
+            const req = this._db.transaction(store, 'readonly').objectStore(store).get(key);
+            req.onsuccess = () => res(req.result);
+            req.onerror = () => rej(req.error);
+        });
+    },
+    async getByPrefix(store, prefix) {
+        return new Promise((res, rej) => {
+            const results = [];
+            const req = this._db.transaction(store, 'readonly').objectStore(store).openCursor();
+            req.onsuccess = e => {
+                const c = e.target.result;
+                if (c) { if (typeof c.key === 'string' && c.key.startsWith(prefix)) results.push({ key: c.key, value: c.value }); c.continue(); }
+                else res(results);
+            };
+            req.onerror = () => rej(req.error);
+        });
+    },
+    async deleteByPrefix(store, prefix) {
+        return new Promise((res, rej) => {
+            const tx = this._db.transaction(store, 'readwrite');
+            const req = tx.objectStore(store).openCursor();
+            req.onsuccess = e => {
+                const c = e.target.result;
+                if (c) { if (typeof c.key === 'string' && c.key.startsWith(prefix)) c.delete(); c.continue(); }
+                else res();
+            };
+            tx.onerror = () => rej(tx.error);
+        });
+    },
+    async addMusic(item) {
+        return new Promise((res, rej) => {
+            const tx = this._db.transaction('music', 'readwrite');
+            const req = tx.objectStore('music').add(item);
+            req.onsuccess = () => res(req.result);
+            tx.onerror = () => rej(tx.error);
+        });
+    },
+    async getAllMusic() {
+        return new Promise((res, rej) => {
+            const results = [];
+            const req = this._db.transaction('music', 'readonly').objectStore('music').openCursor();
+            req.onsuccess = e => {
+                const c = e.target.result;
+                if (c) { results.push(c.value); c.continue(); }
+                else res(results);
+            };
+            req.onerror = () => rej(req.error);
+        });
+    },
+    async deleteMusic(id) {
+        return new Promise((res, rej) => {
+            const tx = this._db.transaction('music', 'readwrite');
+            tx.objectStore('music').delete(id);
+            tx.oncomplete = () => res();
+            tx.onerror = () => rej(tx.error);
+        });
+    },
+    async getAllImages() {
+        return this.getByPrefix('images', '');
+    }
+};
+
 /* ========== DATA STORE ========== */
 const Store = {
     _k(k) { return 'gt_' + k; },
@@ -53,11 +140,126 @@ const Modal = {
     }
 };
 
+/* ========== MUSIC PLAYER ========== */
+const MusicPlayer = {
+    audio: null, playlist: [], currentIndex: -1, isPlaying: false,
+
+    async init() {
+        this.audio = document.getElementById('global-audio');
+        this.playlist = JSON.parse(localStorage.getItem('gt_playlist') || '[]');
+        this.audio.volume = parseFloat(localStorage.getItem('gt_volume') || '0.7');
+        this.audio.addEventListener('ended', () => this.next());
+        this.audio.addEventListener('timeupdate', () => this._syncProgress());
+    },
+
+    async autoPlay() {
+        if (!this.playlist.length) return;
+        this.currentIndex = 0;
+        await this._load(0);
+    },
+
+    async _load(idx) {
+        if (idx < 0 || idx >= this.playlist.length) return;
+        this.currentIndex = idx;
+        try {
+            const item = await MediaStore.get('music', this.playlist[idx].id);
+            if (!item) return;
+            const url = URL.createObjectURL(item.blob);
+            if (this.audio._url) URL.revokeObjectURL(this.audio._url);
+            this.audio._url = url;
+            this.audio.src = url;
+            await this.audio.play();
+            this.isPlaying = true;
+        } catch { this.isPlaying = false; }
+        this._syncUI();
+    },
+
+    toggle() {
+        if (!this.playlist.length) return;
+        if (this.currentIndex < 0) { this._load(0); return; }
+        if (this.isPlaying) { this.audio.pause(); this.isPlaying = false; }
+        else { this.audio.play().then(() => { this.isPlaying = true; this._syncUI(); }).catch(() => {}); }
+        this._syncUI();
+    },
+
+    next() { if (this.playlist.length) this._load((this.currentIndex + 1) % this.playlist.length); },
+    prev() { if (this.playlist.length) this._load((this.currentIndex - 1 + this.playlist.length) % this.playlist.length); },
+    setVolume(v) { this.audio.volume = v; localStorage.setItem('gt_volume', String(v)); },
+    seek(pct) { if (this.audio.duration) this.audio.currentTime = this.audio.duration * pct; },
+
+    async addSong(file) {
+        if (this.playlist.length >= 10) { Modal.alert('⚠️', '已达上限', '最多只能添加10首歌曲。'); return; }
+        const name = file.name.replace(/\.[^.]+$/, '');
+        const id = await MediaStore.addMusic({ name, blob: file, type: file.type });
+        this.playlist.push({ id, name });
+        localStorage.setItem('gt_playlist', JSON.stringify(this.playlist));
+        if (this.playlist.length === 1) this._load(0);
+    },
+
+    async removeSong(idx) {
+        if (idx < 0 || idx >= this.playlist.length) return;
+        await MediaStore.deleteMusic(this.playlist[idx].id);
+        this.playlist.splice(idx, 1);
+        localStorage.setItem('gt_playlist', JSON.stringify(this.playlist));
+        if (this.currentIndex === idx) {
+            this.audio.pause(); this.audio.src = ''; this.isPlaying = false;
+            if (this.playlist.length) { this.currentIndex = 0; this._load(0); }
+            else this.currentIndex = -1;
+        } else if (this.currentIndex > idx) this.currentIndex--;
+    },
+
+    getName() {
+        return this.currentIndex >= 0 && this.currentIndex < this.playlist.length
+            ? this.playlist[this.currentIndex].name : '未添加歌曲';
+    },
+
+    _syncUI() {
+        const el = document.getElementById('mp-card');
+        if (!el) return;
+        const n = el.querySelector('.mp-name'), b = el.querySelector('.mp-play');
+        if (n) n.textContent = this.getName();
+        if (b) b.textContent = this.isPlaying ? '⏸' : '▶';
+    },
+
+    _syncProgress() {
+        const bar = document.getElementById('mp-fill'), time = document.getElementById('mp-time');
+        if (bar && this.audio.duration) bar.style.width = (this.audio.currentTime / this.audio.duration * 100) + '%';
+        if (time && this.audio.duration) {
+            const f = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+            time.textContent = f(this.audio.currentTime) + ' / ' + f(this.audio.duration);
+        }
+    },
+
+    onProgressClick(e) {
+        const r = e.currentTarget.getBoundingClientRect();
+        this.seek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)));
+    },
+
+    renderCard() {
+        const vol = this.audio ? this.audio.volume : 0.7;
+        const icon = this.isPlaying ? '⏸' : '▶';
+        return `<div class="mp-card" id="mp-card">
+            <div class="mp-header"><span class="mp-icon">🎵</span><span class="mp-name">${App._esc(this.getName())}</span>
+                <button class="mp-mgr" onclick="App.showMusicManager()">管理</button></div>
+            <div class="mp-bar" onclick="MusicPlayer.onProgressClick(event)"><div class="mp-fill" id="mp-fill"></div></div>
+            <div class="mp-time" id="mp-time">0:00 / 0:00</div>
+            <div class="mp-ctrls">
+                <button class="mp-btn" onclick="MusicPlayer.prev()">⏮</button>
+                <button class="mp-btn mp-play" onclick="MusicPlayer.toggle()">${icon}</button>
+                <button class="mp-btn" onclick="MusicPlayer.next()">⏭</button>
+                <div class="mp-vol"><span>🔊</span>
+                    <input type="range" min="0" max="1" step="0.05" value="${vol}" class="mp-vol-slider" onchange="MusicPlayer.setVolume(+this.value)">
+                </div>
+            </div></div>`;
+    }
+};
+
 /* ========== APP ========== */
 const App = {
     stack: [],
 
-    init() {
+    async init() {
+        await MediaStore.init();
         Modal.init();
         this._applyTheme(localStorage.getItem('gt_theme') || 'light');
         this._checkLock();
@@ -97,13 +299,15 @@ const App = {
         }
     },
 
-    _enterApp() {
+    async _enterApp() {
         document.getElementById('lock-screen').style.display = 'none';
         document.getElementById('app').style.display = 'flex';
+        await MusicPlayer.init();
         this.navigate('home');
         window.addEventListener('popstate', () => {
             if (this.stack.length > 1) { this.stack.pop(); this.render(); }
         });
+        MusicPlayer.autoPlay();
     },
 
     toggleTheme() {
@@ -125,6 +329,7 @@ const App = {
     get current() { return this.stack[this.stack.length - 1]; },
 
     navigate(page, params) {
+        this._pendingImages = [];
         this.stack.push({ page, params: params || {} });
         if (this.stack.length > 1) history.pushState(null, '', '');
         this.render();
@@ -147,6 +352,8 @@ const App = {
             document.getElementById('main').scrollTop = 0;
         }
         this._header();
+        if (page === 'home') { this._checkMilestone(); this._checkCrownWarning(); }
+        if (page === 'history' && params.key) this._loadHistoryImages(params.key);
     },
 
     _header() {
@@ -208,7 +415,7 @@ const App = {
     },
 
     /* --- Submissions --- */
-    submitProblem() {
+    async submitProblem() {
         const q1 = document.getElementById('f-problem').value.trim();
         const q2 = document.getElementById('f-judgment').value.trim();
         const q3 = document.getElementById('f-tried').value.trim();
@@ -216,70 +423,86 @@ const App = {
             Modal.alert('✏️', '还没写完', '三个问题都要填，这是在训练你的分析肌肉！');
             return;
         }
-        Store.add('problems', { problem: q1, judgment: q2, tried: q3 });
+        const entry = { problem: q1, judgment: q2, tried: q3 };
+        Store.add('problems', entry);
+        await this._savePendingImages('problems', entry.id);
         if ((q1 + q2 + q3).length >= 10) this._pendingCelebrate = true;
         Modal.alert('🌟', '很不错！', '你的大脑已经在重新构建，别急！<br>我们慢慢来就好。', '继续加油', 'success', 'App.goBack()');
     },
 
-    submitOutput() {
+    async submitOutput() {
         const c = document.getElementById('f-content').value.trim();
         if (!c) { Modal.alert('✏️', '写点什么吧', '哪怕只有一句话，也是今天的收获。'); return; }
         const { type, label } = this.current.params;
-        Store.add('outputs', { type, label, content: c });
+        const entry = { type, label, content: c };
+        Store.add('outputs', entry);
+        await this._savePendingImages('outputs', entry.id);
         if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('✨', '已记录！', '每一次记录都是成长的印记。', '好的', 'success', 'App.goBack()');
     },
 
-    submitReflect() {
+    async submitReflect() {
         const c = document.getElementById('f-content').value.trim();
         if (!c) { Modal.alert('✏️', '写点什么吧', '反思不需要长篇大论，一句话也好。'); return; }
         const { type, label } = this.current.params;
-        Store.add('reflects', { type, label, content: c });
+        const entry = { type, label, content: c };
+        Store.add('reflects', entry);
+        await this._savePendingImages('reflects', entry.id);
         if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('🪞', '已记录', '看见问题本身就是进步。', '好的', 'primary', 'App.goBack()');
     },
 
-    submitEncourage() {
+    async submitEncourage() {
         const c = document.getElementById('f-content').value.trim();
         if (!c) { Modal.alert('✏️', '想想看', '今天一定有值得表扬自己的地方！'); return; }
-        Store.add('encourages', { content: c });
+        const entry = { content: c };
+        Store.add('encourages', entry);
+        await this._savePendingImages('encourages', entry.id);
         if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('🎉', '你值得被肯定！', '记住这个感觉，你比自己以为的更好。', '谢谢自己', 'success', 'App.goBack()');
     },
 
-    submitCriticize() {
+    async submitCriticize() {
         const c = document.getElementById('f-content').value.trim();
         if (!c) { Modal.alert('✏️', '诚实面对', '写下来不是为了自我惩罚，是为了不再重复。'); return; }
-        Store.add('criticizes', { content: c });
+        const entry = { content: c };
+        Store.add('criticizes', entry);
+        await this._savePendingImages('criticizes', entry.id);
         if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('💪', '已记录', '能直面不足的人，才有资格变强。', '我会改进', 'primary', 'App.goBack()');
     },
 
-    submitMonthlyPos() {
+    async submitMonthlyPos() {
         const c = document.getElementById('f-content').value.trim();
         const m = document.getElementById('f-month').value;
         if (!c) { Modal.alert('✏️', '想想看', '这个月一定有进步的地方！'); return; }
-        Store.add('monthlyPos', { month: m, content: c });
+        const entry = { month: m, content: c };
+        Store.add('monthlyPos', entry);
+        await this._savePendingImages('monthlyPos', entry.id);
         if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('📈', '正反馈已记录', '每一点进步都值得被铭记。', '好的', 'success', 'App.goBack()');
     },
 
-    submitMonthlyNeg() {
+    async submitMonthlyNeg() {
         const c = document.getElementById('f-content').value.trim();
         const m = document.getElementById('f-month').value;
         if (!c) { Modal.alert('✏️', '诚实面对', '记录遗憾不是为了自责，是为了下个月更好。'); return; }
-        Store.add('monthlyNeg', { month: m, content: c });
+        const entry = { month: m, content: c };
+        Store.add('monthlyNeg', entry);
+        await this._savePendingImages('monthlyNeg', entry.id);
         if (c.length >= 10) this._pendingCelebrate = true;
         Modal.alert('📝', '负反馈已记录', '看见问题就是解决问题的开始。', '下个月会更好', 'primary', 'App.goBack()');
     },
 
-    submitVictories() {
+    async submitVictories() {
         const w1 = document.getElementById('f-win1').value.trim();
         const w2 = document.getElementById('f-win2').value.trim();
         const w3 = document.getElementById('f-win3').value.trim();
         const wins = [w1, w2, w3].filter(w => w);
         if (!wins.length) { Modal.alert('✏️', '想想看', '今天一定有值得记录的小胜利！<br>搞明白了一个变量名？问问题前自己先想了？都算！'); return; }
-        Store.add('victories', { wins });
+        const entry = { wins };
+        Store.add('victories', entry);
+        await this._savePendingImages('victories', entry.id);
         if (wins.join('').length >= 10) this._pendingCelebrate = true;
         const msgs = [
             '每一个小胜利都在修复你的自信心！',
@@ -294,7 +517,7 @@ const App = {
             <div class="modal-icon">⚠️</div>
             <div class="modal-title">确认删除</div>
             <div class="modal-text">删除后无法恢复，确定要删除吗？</div>
-            <button class="modal-btn danger" onclick="Store.del('${key}',${id});Modal.hide();App.render()">确认删除</button>
+            <button class="modal-btn danger" onclick="Store.del('${key}',${id});MediaStore.deleteByPrefix('images','${key}_${id}_');Modal.hide();App.render()">确认删除</button>
             <button class="modal-btn ghost" onclick="Modal.hide()">取消</button>
         `, true);
     },
@@ -312,7 +535,7 @@ const App = {
         `, true);
     },
 
-    _exportTxt() {
+    async _exportTxt() {
         const lines = [];
         const sep = '═'.repeat(50);
         const thin = '─'.repeat(50);
@@ -353,6 +576,10 @@ const App = {
         });
 
         lines.push(sep, '  总计 ' + App._totalCount() + ' 条记录', sep);
+        try {
+            const allImgs = await MediaStore.getAllImages();
+            if (allImgs.length) lines.push('', `  注：共 ${allImgs.length} 张图片未包含在此文本中`, '  图片仅在 JSON 格式导出中可备份');
+        } catch {}
 
         const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
@@ -364,9 +591,21 @@ const App = {
         Modal.alert('✅', '导出成功', 'TXT 文件已下载，可以直接用记事本或手机打开阅读。', '好的', 'success');
     },
 
-    _doExport(encrypt) {
+    async _doExport(encrypt) {
+        const data = this._gatherData();
+        try {
+            const allImgs = await MediaStore.getAllImages();
+            if (allImgs.length) {
+                const imgData = {};
+                for (const img of allImgs) {
+                    const b64 = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(img.value); });
+                    imgData[img.key] = b64;
+                }
+                data._images = imgData;
+            }
+        } catch {}
         if (!encrypt) {
-            this._downloadJson(this._gatherData(), false);
+            this._downloadJson(data, false);
             return;
         }
         Modal.show(`
@@ -398,7 +637,19 @@ const App = {
                 keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['encrypt']
             );
             const iv = crypto.getRandomValues(new Uint8Array(12));
-            const plaintext = enc.encode(JSON.stringify(this._gatherData()));
+            const expData = this._gatherData();
+        try {
+            const allImgs = await MediaStore.getAllImages();
+            if (allImgs.length) {
+                const imgData = {};
+                for (const img of allImgs) {
+                    const b64 = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(img.value); });
+                    imgData[img.key] = b64;
+                }
+                expData._images = imgData;
+            }
+        } catch {}
+        const plaintext = enc.encode(JSON.stringify(expData));
             const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
             const payload = {
                 encrypted: true,
@@ -504,6 +755,209 @@ const App = {
         const newHash = await this._hashPwd(nw);
         localStorage.setItem('gt_lock_hash', newHash);
         Modal.alert('✅', '密码已修改', '下次打开时将使用新密码。', '好的', 'success');
+    },
+
+    /* --- Image upload helpers --- */
+    _pendingImages: [],
+
+    _imgUploadHtml() {
+        return `<div class="img-upload-area">
+            <div class="img-previews" id="img-previews"></div>
+            <div class="img-btns">
+                <label class="img-btn">📷 拍照<input type="file" accept="image/*" capture="environment" onchange="App._handleImageFiles(this.files)" hidden></label>
+                <label class="img-btn">🖼️ 选图片<input type="file" accept="image/*" multiple onchange="App._handleImageFiles(this.files)" hidden></label>
+            </div>
+            <div class="img-hint">最多5张 · 已选 <span id="img-count">0</span>/5</div>
+        </div>`;
+    },
+
+    async _handleImageFiles(files) {
+        for (const f of files) {
+            if (this._pendingImages.length >= 5) { Modal.alert('⚠️', '已达上限', '最多只能添加5张图片。'); break; }
+            this._pendingImages.push(await this._compressImage(f));
+        }
+        this._renderImagePreviews();
+    },
+
+    _renderImagePreviews() {
+        const c = document.getElementById('img-previews'), n = document.getElementById('img-count');
+        if (!c) return;
+        if (n) n.textContent = this._pendingImages.length;
+        c.innerHTML = this._pendingImages.map((b, i) => {
+            const u = URL.createObjectURL(b);
+            return `<div class="img-pv"><img src="${u}"><button class="img-pv-del" onclick="App._removeImage(${i})">×</button></div>`;
+        }).join('');
+    },
+
+    _removeImage(i) { this._pendingImages.splice(i, 1); this._renderImagePreviews(); },
+
+    _compressImage(file) {
+        return new Promise(res => {
+            const reader = new FileReader();
+            reader.onload = e => {
+                const img = new Image();
+                img.onload = () => {
+                    const cv = document.createElement('canvas');
+                    let w = img.width, h = img.height;
+                    if (w > 1200) { h = h * 1200 / w; w = 1200; }
+                    cv.width = w; cv.height = h;
+                    cv.getContext('2d').drawImage(img, 0, 0, w, h);
+                    cv.toBlob(b => res(b), 'image/jpeg', 0.7);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+    },
+
+    async _savePendingImages(cat, id) {
+        for (let i = 0; i < this._pendingImages.length; i++)
+            await MediaStore.put('images', `${cat}_${id}_${i}`, this._pendingImages[i]);
+        this._pendingImages = [];
+    },
+
+    _previewImage(src) {
+        const o = document.createElement('div');
+        o.className = 'img-overlay';
+        o.onclick = () => o.remove();
+        o.innerHTML = `<img src="${src}">`;
+        document.body.appendChild(o);
+    },
+
+    async _loadHistoryImages(key) {
+        const entries = Store.get(key);
+        for (const e of entries) {
+            const imgs = await MediaStore.getByPrefix('images', `${key}_${e.id}_`);
+            if (!imgs.length) continue;
+            const el = document.getElementById(`imgs-${e.id}`);
+            if (!el) continue;
+            el.innerHTML = imgs.map(img => {
+                const url = URL.createObjectURL(img.value);
+                return `<img src="${url}" class="hc-img" onclick="App._previewImage(this.src)">`;
+            }).join('');
+            el.style.display = 'flex';
+        }
+    },
+
+    /* --- Milestone & Crown --- */
+    _totalDays() {
+        const dates = new Set();
+        Store.ALL_KEYS.forEach(k => Store.get(k).forEach(e => { if (e.time) dates.add(e.time.slice(0, 10)); }));
+        return dates.size;
+    },
+
+    _daysSinceLastRecord() {
+        let latest = 0;
+        Store.ALL_KEYS.forEach(k => Store.get(k).forEach(e => {
+            if (e.time) { const t = new Date(e.time).getTime(); if (t > latest) latest = t; }
+        }));
+        return latest ? Math.floor((Date.now() - latest) / 86400000) : Infinity;
+    },
+
+    _getCrown() {
+        const total = this._totalDays();
+        if (total < 100 || this._daysSinceLastRecord() > 7) return null;
+        let size, text = '';
+        if (total >= 1000) { size = 'crown-xl'; text = '欲戴王冠，必承其重'; }
+        else if (total >= 500) size = 'crown-lg';
+        else if (total >= 300) size = 'crown-md';
+        else size = 'crown-sm';
+        return { size, text, total };
+    },
+
+    _checkCrownWarning() {
+        const total = this._totalDays(), gap = this._daysSinceLastRecord();
+        const warned = localStorage.getItem('gt_crown_warned');
+        if (total >= 100 && gap > 7 && !warned) {
+            localStorage.setItem('gt_crown_warned', '1');
+            Modal.alert('👑', '王冠正在消失...', `你已经 ${gap} 天没有记录了！<br>坚持记录才能保住你的王冠。`, '我马上记录', 'danger');
+        } else if (gap <= 7) localStorage.removeItem('gt_crown_warned');
+    },
+
+    _checkMilestone() {
+        const total = this._totalDays();
+        const milestones = [30, 60, 100, 200, 300, 500, 1000];
+        const last = parseInt(localStorage.getItem('gt_last_milestone') || '0');
+        for (const m of milestones) {
+            if (total >= m && m > last) {
+                localStorage.setItem('gt_last_milestone', String(m));
+                setTimeout(() => this._milestoneScene(m), 800);
+                break;
+            }
+        }
+    },
+
+    _milestoneScene(days) {
+        const overlay = document.createElement('div');
+        overlay.id = 'celebrate-overlay';
+        document.body.appendChild(overlay);
+        const canvas = document.createElement('canvas');
+        overlay.appendChild(canvas);
+        const textEl = document.createElement('div');
+        textEl.className = 'celebrate-text';
+        overlay.appendChild(textEl);
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width = window.innerWidth, H = canvas.height = window.innerHeight;
+        const particles = [];
+        const gold = ['#ffd700','#ffb700','#ff9500','#ffe066','#fff4b0'];
+        const rainbow = ['#ff6b6b','#feca57','#48dbfb','#ff9ff3','#54a0ff','#6c5ce7','#00d2d3'];
+        const lv = days >= 1000 ? 7 : days >= 500 ? 6 : days >= 300 ? 5 : days >= 200 ? 4 : days >= 100 ? 3 : days >= 60 ? 2 : 1;
+        const pal = lv >= 3 ? gold : rainbow;
+
+        function burst(x, y, n) {
+            for (let i = 0; i < n; i++) {
+                const a = Math.random() * Math.PI * 2, s = 1.5 + Math.random() * 5.5;
+                particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, decay: 0.007 + Math.random() * 0.013, color: pal[Math.floor(Math.random() * pal.length)], size: 2 + Math.random() * 3, t: 's' });
+            }
+        }
+        function rain(n) {
+            for (let i = 0; i < n; i++)
+                particles.push({ x: Math.random() * W, y: -10 - Math.random() * 60, vx: (Math.random() - 0.5) * 3, vy: 1.5 + Math.random() * 3, life: 1, decay: 0.002 + Math.random() * 0.003, color: pal[Math.floor(Math.random() * pal.length)], size: 4 + Math.random() * 6, rot: Math.random() * 360, rs: (Math.random() - 0.5) * 10, t: 'c' });
+        }
+        function shootingStar(n) {
+            for (let i = 0; i < n; i++)
+                particles.push({ x: W + 10, y: Math.random() * H * 0.4, vx: -3 - Math.random() * 5, vy: 0.5 + Math.random() * 1.5, life: 1, decay: 0.004 + Math.random() * 0.008, color: gold[Math.floor(Math.random() * gold.length)], size: 2 + Math.random() * 2, t: 'st' });
+        }
+
+        const cfI = setInterval(() => rain([4, 7, 10, 13, 16, 20, 30][lv - 1]), 200);
+        if (lv >= 3) { const fw = [0, 0, 3, 4, 5, 7, 9][lv - 1]; for (let i = 0; i < fw; i++) setTimeout(() => burst(W * (0.15 + Math.random() * 0.7), H * (0.1 + Math.random() * 0.35), 40 + lv * 12), 200 + i * 450); }
+        if (lv >= 6) { setTimeout(() => shootingStar(lv >= 7 ? 25 : 12), 400); setTimeout(() => shootingStar(lv >= 7 ? 25 : 12), 1200); }
+
+        let running = true;
+        (function animate() {
+            if (!running) return;
+            ctx.fillStyle = lv >= 7 ? 'rgba(0,0,0,0.06)' : 'rgba(0,0,0,0.14)';
+            ctx.fillRect(0, 0, W, H);
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i]; p.x += p.vx; p.y += p.vy; p.life -= p.decay;
+                if (p.life <= 0 || p.y > H + 30) { particles.splice(i, 1); continue; }
+                ctx.globalAlpha = p.life;
+                if (p.t === 'c') { p.vy += 0.012; p.rot += p.rs; ctx.save(); ctx.fillStyle = p.color; ctx.translate(p.x, p.y); ctx.rotate(p.rot * Math.PI / 180); ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2); ctx.restore(); }
+                else if (p.t === 's') { p.vy += 0.035; p.vx *= 0.99; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2); ctx.fill(); }
+                else if (p.t === 'st') { ctx.strokeStyle = p.color; ctx.lineWidth = 1; ctx.globalAlpha = p.life * 0.4; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + 18, p.y - 9); ctx.stroke(); ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); }
+            }
+            ctx.globalAlpha = 1;
+            requestAnimationFrame(animate);
+        })();
+
+        const msgs = { 30: '🎉 坚持30天！\n你已经超越了90%的人！', 60: '✨ 60天持续成长！\n习惯已经在生根发芽！', 100: '👑 百日成就解锁！\n王冠已为你戴上！', 200: '🌟 200天！\n你已经是真正的行动者！', 300: '💎 300天！\n王冠为你再次升级！', 500: '🔥 500天！\n半程英雄，势不可挡！', 1000: '👑 千日成就！\n欲戴王冠，必承其重' };
+        setTimeout(() => { textEl.innerHTML = (msgs[days] || '🎉 里程碑！').replace(/\n/g, '<br>'); textEl.classList.add('show'); }, 1500);
+        setTimeout(() => { running = false; clearInterval(cfI); overlay.style.opacity = '0'; setTimeout(() => overlay.remove(), 600); }, 3000 + lv * 500 + 3000);
+    },
+
+    /* --- Music manager --- */
+    showMusicManager() {
+        const list = MusicPlayer.playlist.map((s, i) =>
+            `<div class="mm-item"><span class="mm-num">${i + 1}</span><span class="mm-name">${App._esc(s.name)}</span>
+            <button class="mm-del" onclick="MusicPlayer.removeSong(${i}).then(()=>App.showMusicManager())">×</button></div>`
+        ).join('') || '<div style="text-align:center;color:var(--text-light);padding:16px">还没有添加歌曲</div>';
+        Modal.show(`
+            <div class="modal-title">🎵 歌曲管理</div>
+            <div class="modal-text">最多10首 · 支持 mp3/wav/ogg/m4a/flac</div>
+            <div class="mm-list">${list}</div>
+            ${MusicPlayer.playlist.length < 10 ? `<label class="modal-btn primary" style="cursor:pointer">➕ 添加歌曲<input type="file" accept="audio/*" onchange="MusicPlayer.addSong(this.files[0]).then(()=>App.showMusicManager())" hidden></label>` : ''}
+            <button class="modal-btn ghost" onclick="Modal.hide()">关闭</button>
+        `, true);
     },
 
     _celebrate() {
@@ -615,7 +1069,7 @@ const App = {
         }, 5200);
     },
 
-    _mergeData(data) {
+    async _mergeData(data) {
         Store.ALL_KEYS.forEach(k => {
             if (data[k] && Array.isArray(data[k])) {
                 const existing = Store.get(k);
@@ -626,6 +1080,11 @@ const App = {
                 Store.save(k, merged);
             }
         });
+        if (data._images) {
+            for (const [key, b64] of Object.entries(data._images)) {
+                try { const r = await fetch(b64); const blob = await r.blob(); await MediaStore.put('images', key, blob); } catch {}
+            }
+        }
         Modal.alert('✅', '导入成功', '数据已合并到本地记录中。', '好的', 'success');
         App.render();
     },
@@ -765,6 +1224,7 @@ const App = {
             const streak = App._calcStreak();
             const total = App._totalCount();
             const weekly = App._weeklyCount();
+            const crown = App._getCrown();
 
             const warm = [
                 '每一次记录，都是对自己的一次负责',
@@ -827,11 +1287,14 @@ const App = {
                 <div class="home-greeting">
                     <div class="hi">${App._greeting()}</div>
                     <div class="date">${App._dateStr()}</div>
+                    ${crown ? `<div class="crown-display ${crown.size}">👑</div>${crown.text ? `<div class="crown-motto">${crown.text}</div>` : ''}` : ''}
                     <div class="streak-badge ${streak === 0 ? 'zero' : ''}">
                         ${streak > 0 ? '🔥' : '⏳'} ${streak > 0 ? '连续 ' + streak + ' 天' : '今天还没记录'}
                     </div>
                     <div class="home-quote" style="${qStyle}">${isWarm ? '🌱' : '🔪'} "${q}"</div>
                 </div>
+
+                ${MusicPlayer.renderCard()}
 
                 <div class="stats-row">
                     <div class="stat-card">
@@ -916,6 +1379,7 @@ const App = {
                         <div class="form-hint">列出你做过的所有尝试，包括失败的。失败的尝试也是有效信息。</div>
                         <textarea class="form-textarea" id="f-tried" placeholder="例：1. 查看了旧平台的枚举定义文件 2. 在新平台代码库搜索了 STREAM_ 关键字 3. 尝试直接传旧值但编译报错 4. 查了官方文档但没找到迁移说明..."></textarea>
                     </div>
+                    ${App._imgUploadHtml()}
                     <button class="btn btn-primary" onclick="App.submitProblem()">提交分析</button>
                 </div>`;
         },
@@ -960,6 +1424,7 @@ const App = {
                         <label class="form-label">记录你的产出 <span class="req">*</span></label>
                         <textarea class="form-textarea large" id="f-content" placeholder="${ph[p.type] || ''}"></textarea>
                     </div>
+                    ${App._imgUploadHtml()}
                     <button class="btn btn-success" onclick="App.submitOutput()">保存记录</button>
                 </div>`;
         },
@@ -978,6 +1443,7 @@ const App = {
                         <label class="form-label">写下你的反思 <span class="req">*</span></label>
                         <textarea class="form-textarea large" id="f-content" placeholder="${ph[p.type] || ''}"></textarea>
                     </div>
+                    ${App._imgUploadHtml()}
                     <button class="btn btn-warm" onclick="App.submitReflect()">保存反思</button>
                 </div>`;
         },
@@ -1001,6 +1467,7 @@ const App = {
                         <div class="victory-num">3</div>
                         <textarea class="form-textarea" id="f-win3" placeholder="第三个...（选填）"></textarea>
                     </div>
+                    ${App._imgUploadHtml()}
                     <button class="btn btn-success" onclick="App.submitVictories()">记录今日小胜利 🏆</button>
                 </div>`;
         },
@@ -1038,6 +1505,7 @@ const App = {
                         <div class="form-hint">搞明白了一个函数？没有第一时间就问别人？自己先写了判断再提问？都算！</div>
                         <textarea class="form-textarea large" id="f-content" placeholder="今天我做得好的地方是..."></textarea>
                     </div>
+                    ${App._imgUploadHtml()}
                     <button class="btn btn-success" onclick="App.submitEncourage()">记录表扬 🌟</button>
                 </div>`;
         },
@@ -1050,6 +1518,7 @@ const App = {
                         <div class="form-hint">写具体。不要写"今天没努力"，要写"今天遇到XX问题直接问了别人，没有先自己分析"。</div>
                         <textarea class="form-textarea large" id="f-content" placeholder="今天我做得不好的地方是..."></textarea>
                     </div>
+                    ${App._imgUploadHtml()}
                     <button class="btn btn-warm" onclick="App.submitCriticize()">记录批评 ⚡</button>
                 </div>`;
         },
@@ -1091,6 +1560,7 @@ const App = {
                         <div class="form-hint">比上个月强在哪里？学到了什么新东西？有什么事情做得比以前好？</div>
                         <textarea class="form-textarea large" id="f-content" placeholder="这个月我进步了...，收获了..."></textarea>
                     </div>
+                    ${App._imgUploadHtml()}
                     <button class="btn btn-success" onclick="App.submitMonthlyPos()">保存正反馈</button>
                 </div>`;
         },
@@ -1107,6 +1577,7 @@ const App = {
                         <div class="form-hint">这个月有什么遗憾？犯了什么重复的错误？下个月怎么避免？</div>
                         <textarea class="form-textarea large" id="f-content" placeholder="这个月我遗憾的是...，重复犯了...的错误"></textarea>
                     </div>
+                    ${App._imgUploadHtml()}
                     <button class="btn btn-warm" onclick="App.submitMonthlyNeg()">保存负反馈</button>
                 </div>`;
         },
@@ -1231,6 +1702,7 @@ const App = {
                         html += `<div class="hc-content">${App._esc(e.content)}</div>`;
                     }
 
+                    html += `<div class="hc-images" id="imgs-${e.id}"></div>`;
                     html += '</div>';
                 });
             });
